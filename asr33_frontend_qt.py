@@ -267,12 +267,12 @@ class QtPaperTapeReader:
 
 
 class QtPaperTapePunch:
-    """Qt-side paper tape punch with raw TTY and SIMH PTP modes."""
+    """Qt-side paper tape punch for SIMH PTP / OS/8 .PUNCH output."""
 
     def __init__(self, backend, config, ssh_config=None):
         self.backend = backend
         self.config = config
-        self.mode = "TTY"
+        self.mode = "PTP"
         self.active = False
         self.ptp_attached = False
         self.output_name = ""
@@ -281,10 +281,6 @@ class QtPaperTapePunch:
         self.punched_bytes: list[int] = []
         self.visual_phase = 0.0
         self.visual_activity_ticks = 0
-        self._local_file = None
-        self._remote_ssh = None
-        self._remote_sftp = None
-        self._remote_file = None
         self._ptp_poll_ssh = None
         self._ptp_poll_sftp = None
         self._ptp_observed_size = 0
@@ -321,91 +317,22 @@ class QtPaperTapePunch:
         return password or None
 
     def select_output(self, parent) -> bool:
-        """Select and open a punch output file."""
-        if self.mode == "PTP":
-            return self.attach_ptp(parent)
-        self.close_output()
-        self.byte_count = 0
-        self.punched_bytes = []
-        self.visual_phase = 0.0
-        self.visual_activity_ticks = 0
-        if self.remote_enabled:
-            return self._select_remote_output(parent)
-
-        initial_dir = self.config.get("initial_file_path", default=".")
-        path, _ = QFileDialog.getSaveFileName(
-            parent,
-            "Paper Tape Punch Output",
-            str(Path(initial_dir) / "punch.pt"),
-            "Paper tape files (*.pt *.tap *.txt);;All files (*)",
-        )
-        if not path:
-            return False
-        try:
-            self._local_file = open(path, "wb")
-        except OSError as e:
-            print(f"Could not open punch output: {e}")
-            return False
-        self.output_path = path
-        self.output_name = os.path.basename(path)
-        return True
+        """Attach SIMH PTP to a punch output file."""
+        return self.attach_ptp(parent)
 
     def start(self) -> bool:
-        if self.mode == "PTP":
-            return self.attach_ptp(None)
-        if not self.has_output():
-            return False
-        self.active = True
-        return True
+        return self.attach_ptp(None)
 
     def stop(self) -> None:
-        if self.mode == "PTP":
-            self.detach_ptp()
-            return
-        self.active = False
-        self._flush()
+        self.detach_ptp()
 
     def close_output(self) -> None:
         self.stop()
-        try:
-            if self._local_file is not None:
-                self._local_file.close()
-            if self._remote_file is not None:
-                self._remote_file.close()
-            if self._remote_sftp is not None:
-                self._remote_sftp.close()
-            if self._remote_ssh is not None:
-                self._remote_ssh.close()
-        finally:
-            self._local_file = None
-            self._remote_file = None
-            self._remote_sftp = None
-            self._remote_ssh = None
-            self.output_name = ""
-            self.output_path = ""
+        self.output_name = ""
+        self.output_path = ""
 
     def has_output(self) -> bool:
-        return (
-            self._local_file is not None or
-            self._remote_file is not None or
-            self.ptp_attached
-        )
-
-    def punch_bytes(self, data: bytes) -> int:
-        if self.mode != "TTY" or not self.active or not data:
-            return 0
-        target = self._remote_file if self._remote_file is not None else self._local_file
-        if target is None:
-            self.active = False
-            return 0
-        try:
-            target.write(data)
-        except OSError as e:
-            print(f"Could not write punch output: {e}")
-            self.active = False
-            return 0
-        self._record_punch_activity(data, len(data))
-        return len(data)
+        return self.ptp_attached
 
     def poll_ptp_activity(self) -> int:
         """Observe a SIMH PTP output file and animate newly written bytes."""
@@ -456,20 +383,6 @@ class QtPaperTapePunch:
     def visual_active(self) -> bool:
         return self.visual_activity_ticks > 0
 
-    def toggle_mode(self) -> None:
-        """Switch between raw terminal punch and SIMH PTP mode."""
-        if self.mode == "TTY":
-            self.close_output()
-            self.mode = "PTP"
-        else:
-            self.detach_ptp()
-            self.mode = "TTY"
-        self.byte_count = 0
-        self.punched_bytes = []
-        self.visual_phase = 0.0
-        self.visual_activity_ticks = 0
-        self._close_ptp_poll()
-
     def attach_ptp(self, parent) -> bool:
         """Attach SIMH PTP to a remote file for clean OS/8 .PUNCH output."""
         if self.backend is None or not hasattr(self.backend, "send_data"):
@@ -477,8 +390,8 @@ class QtPaperTapePunch:
         initial = self.output_name or "punch.pt"
         name, ok = QInputDialog.getText(
             parent,
-            "SIMH PTP Attach",
-            "PTP output filename:",
+            "New Paper Tape",
+            "New paper tape filename:",
             text=initial,
         )
         if not ok or not name:
@@ -532,15 +445,6 @@ class QtPaperTapePunch:
         self.visual_activity_ticks = 0
         self._close_ptp_poll()
 
-    def _flush(self) -> None:
-        try:
-            if self._local_file is not None:
-                self._local_file.flush()
-            if self._remote_file is not None:
-                self._remote_file.flush()
-        except OSError:
-            pass
-
     def _ensure_ptp_poll_sftp(self):
         if self._ptp_poll_sftp is not None:
             return self._ptp_poll_sftp
@@ -574,54 +478,6 @@ class QtPaperTapePunch:
         finally:
             self._ptp_poll_sftp = None
             self._ptp_poll_ssh = None
-
-    def _select_remote_output(self, parent) -> bool:
-        if not self.remote_host or not self.remote_username or not self.remote_dir:
-            print("Remote paper tape punch is enabled but host, username, or dir is not configured")
-            return False
-        name, ok = QInputDialog.getText(parent, "Paper Tape Punch", "Remote output file:", text="punch.pt")
-        if not ok or not name:
-            return False
-        name = os.path.basename(name.strip())
-        if not name:
-            return False
-        if "." not in name:
-            name += ".pt"
-        cached_password = None
-        if self.backend is not None and hasattr(self.backend, "get_cached_ssh_password"):
-            cached_password = self.backend.get_cached_ssh_password()
-        file_password = self._read_password_file(self.remote_password_file)
-        try:
-            self._remote_ssh = paramiko.SSHClient()
-            self._remote_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            self._remote_ssh.connect(
-                hostname=self.remote_host,
-                username=self.remote_username,
-                port=self.remote_port,
-                password=self.remote_password or cached_password or file_password,
-                key_filename=self.remote_key_filename,
-                timeout=8,
-                look_for_keys=self.remote_look_for_keys,
-                allow_agent=self.remote_use_agent,
-            )
-            cmd = f"mountpoint -q {self.remote_dir}; echo $?"
-            _, stdout, _ = self._remote_ssh.exec_command(cmd)
-            mounted = stdout.read().decode("ascii", errors="ignore").strip()
-            if mounted != "0":
-                print(f"Remote paper tape punch directory is not mounted: {self.remote_dir}")
-                self.close_output()
-                return False
-            self._remote_sftp = self._remote_ssh.open_sftp()
-            remote_path = self.remote_dir.rstrip("/") + "/" + name
-            self._remote_file = self._remote_sftp.open(remote_path, "wb")
-            self.output_name = name
-            self.output_path = remote_path
-            return True
-        except Exception as e:
-            print(f"Could not open remote punch output: {e}")
-            self.close_output()
-            return False
-
 
 def load_terminal_font(config) -> QFont:
     """Load the configured ASR-33 font for the Qt text surface."""
@@ -1193,9 +1049,6 @@ class TeletypeWidget(QWidget):
         if self._punch_file_rect.contains(pos):
             self.frontend.punch_select_output()
             return
-        if self._punch_mode_rect.contains(pos):
-            self.frontend.punch_toggle_mode()
-            return
         if self._punch_on_rect.contains(pos):
             self.frontend.punch_on()
             return
@@ -1689,7 +1542,7 @@ class TeletypeWidget(QWidget):
         painter.drawText(
             punch_rect.adjusted(18, punch_rect.height() - 158, -18, 0),
             Qt.AlignLeft | Qt.AlignTop,
-            f"PAPER TAPE\nPUNCH {self.punch.mode if self.punch else 'TTY'}",
+            "PAPER TAPE\nPUNCH PTP",
         )
 
         if self.punch is not None and self.punch.has_output():
@@ -1701,9 +1554,7 @@ class TeletypeWidget(QWidget):
             painter.drawText(
                 punch_rect.adjusted(18, punch_rect.height() - 118, -18, 0),
                 Qt.AlignLeft | Qt.AlignTop,
-                f"{name}\n{self.punch.byte_count} BYTES"
-                if self.punch.mode == "TTY"
-                else f"{name}\n{self.punch.byte_count} BYTES PTP",
+                f"{name}\n{self.punch.byte_count} BYTES PTP",
             )
 
         note_rect = QRectF(
@@ -1714,36 +1565,28 @@ class TeletypeWidget(QWidget):
         )
         painter.setPen(QPen(QColor("#5f5749"), 1))
         painter.setFont(QFont("Helvetica", 8))
-        if self.punch and self.punch.mode == "TTY":
-            painter.drawText(
-                note_rect,
-                Qt.AlignLeft | Qt.AlignTop,
-                "TTY MODE\nraw terminal stream",
-            )
-        else:
-            painter.drawText(
-                note_rect,
-                Qt.AlignLeft | Qt.AlignTop,
-                "PTP MODE\nOS/8 .PUNCH output",
-            )
+        painter.drawText(
+            note_rect,
+            Qt.AlignLeft | Qt.AlignTop,
+            "NEW PAPER TAPE\nthen OS/8 .PUNCH",
+        )
 
         y = punch_rect.bottom() - 82
-        self._punch_mode_rect = QRectF(punch_rect.left() + 18, y - 34, punch_rect.width() - 36, 24)
-        self._punch_file_rect = QRectF(punch_rect.left() + 18, y, punch_rect.width() - 36, 24)
+        self._punch_mode_rect = QRectF()
+        self._punch_file_rect = QRectF(punch_rect.left() + 18, y - 34, punch_rect.width() - 36, 24)
         self._punch_on_rect = QRectF(punch_rect.left() + 18, y + 34, (punch_rect.width() - 48) / 2, 28)
         self._punch_off_rect = QRectF(self._punch_on_rect.right() + 12, y + 34,
                                       (punch_rect.width() - 48) / 2, 28)
-        self._draw_punch_mode_button(painter, self._punch_mode_rect)
         self._draw_punch_file_button(painter, self._punch_file_rect)
         self._draw_punch_button(
             painter,
             self._punch_on_rect,
-            "ATTACH" if self.punch and self.punch.mode == "PTP" else "PUNCH ON",
+            "ATTACH",
         )
         self._draw_punch_button(
             painter,
             self._punch_off_rect,
-            "DETACH" if self.punch and self.punch.mode == "PTP" else "OFF",
+            "DETACH",
         )
 
     def _draw_device_rack(self, painter: QPainter, cap_rect: QRectF) -> None:
@@ -1838,17 +1681,6 @@ class TeletypeWidget(QWidget):
         painter.setBrush(color)
         painter.drawEllipse(rect)
 
-    def _draw_punch_mode_button(self, painter: QPainter, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor("#6b6255"), 1))
-        painter.setBrush(QColor("#d9d1bf"))
-        painter.drawRoundedRect(rect, 5, 5)
-        painter.setPen(QPen(QColor("#2f2b25"), 1))
-        font = QFont("Helvetica", 8)
-        font.setBold(True)
-        painter.setFont(font)
-        mode = self.punch.mode if self.punch is not None else "TTY"
-        painter.drawText(rect, Qt.AlignCenter, f"MODE {mode}")
-
     def _draw_punch_file_button(self, painter: QPainter, rect: QRectF) -> None:
         painter.setPen(QPen(QColor("#6b6255"), 1))
         painter.setBrush(QColor("#d2c8b5"))
@@ -1857,14 +1689,12 @@ class TeletypeWidget(QWidget):
         font = QFont("Helvetica", 8)
         font.setBold(True)
         painter.setFont(font)
-        label = "PTP FILE" if self.punch and self.punch.mode == "PTP" else "OUTPUT FILE"
-        painter.drawText(rect, Qt.AlignCenter, label)
+        painter.drawText(rect, Qt.AlignCenter, "NEW TAPE NAME")
 
     def _draw_punch_button(self, painter: QPainter, rect: QRectF, label: str) -> None:
         active = (
             self.punch is not None and
-            ((self.punch.active and label == "PUNCH ON") or
-             (self.punch.ptp_attached and label == "ATTACH"))
+            self.punch.ptp_attached and label == "ATTACH"
         )
         painter.setPen(QPen(QColor("#6b6255"), 1))
         painter.setBrush(QColor("#e1d8c5") if active else QColor("#a79f90"))
@@ -2137,8 +1967,6 @@ class ASR33QtFrontend(QMainWindow):
             self._rk05_activity_ticks = 35
             if any(unit["attached"] for unit in self._tu56_units):
                 self._tu56_activity_ticks = 35
-        if self.paper_tape_punch.punch_bytes(data):
-            self.paper.update()
         self.display_signal.emit()
 
     def run(self) -> None:
@@ -2578,10 +2406,6 @@ class ASR33QtFrontend(QMainWindow):
     def punch_select_output(self) -> None:
         if self.paper_tape_punch.select_output(self):
             self.paper.update()
-
-    def punch_toggle_mode(self) -> None:
-        self.paper_tape_punch.toggle_mode()
-        self.paper.update()
 
     def punch_on(self) -> None:
         if self.paper_tape_punch.start():

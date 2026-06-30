@@ -137,13 +137,16 @@ attach dt0 "/media/TU56/focal69.tu56"
 The paper tape reader lists compatible files from the configured remote directory,
 currently `/media/PAPER_TAPE_PUNCH`, and loads them over SFTP.
 
-The paper tape punch has two modes:
+The paper tape punch is intentionally limited to the clean SIMH `PTP` workflow.
+Click `NEW TAPE NAME` or `ATTACH`, type the name of a new paper tape file, then run
+the OS/8 command that writes to the punch, for example:
 
-* raw ASR-33 punch captures the terminal stream exactly as it appears
-* PTP mode attaches SIMH `ptp` to a remote file so OS/8 commands such as
-  `.PUNCH DEMO.BA` create a clean paper tape file
+```text
+.PUNCH DEMO.BA
+```
 
-For clean OS/8 output, use PTP mode rather than raw terminal capture.
+The punch does not select an existing program. It prepares a new output tape file in
+`/media/PAPER_TAPE_PUNCH`, and OS/8 fills that tape through the `PTP:` device.
 
 **RK05**
 
@@ -198,3 +201,9 @@ If RK05 or TU56 files do not appear:
 * confirm the directories are `/media/RK05` and `/media/TU56`
 * confirm file extensions are `.rk05` and `.tu56`
 * confirm the Pi user can read those files
+
+## Author
+
+This fork is maintained by Sébastien INION as part of a personal research and digital archaeology project around the PDP-8, OS/8, paper tape workflows, and historical computer interfaces.
+
+For questions or suggestions, please use GitHub Issues.
