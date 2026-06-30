@@ -114,7 +114,7 @@ The interface expects removable USB media on the Raspberry Pi to be mounted unde
 Recommended layout:
 
 ```text
-/media/PAPER_TAPE_PUNCH  paper tape reader/punch files: .pt, .tap, .rim, .bin, ...
+/media/PAPER-TAPE  paper tape reader/punch files: .pt, .tap, .rim, .bin, ...
 /media/RK05        RK05 disk images: .rk05
 /media/TU56        DECtape images: .tu56
 ```
@@ -135,18 +135,18 @@ attach dt0 "/media/TU56/focal69.tu56"
 **Paper Tape**
 
 The paper tape reader lists compatible files from the configured remote directory,
-currently `/media/PAPER_TAPE_PUNCH`, and loads them over SFTP.
+currently `/media/PAPER-TAPE`, and loads them over SFTP.
 
 The paper tape punch is intentionally limited to the clean SIMH `PTP` workflow.
-Click `NEW TAPE NAME` or `ATTACH`, type the name of a new paper tape file, then run
-the OS/8 command that writes to the punch, for example:
+Click `NEW TAPE`, type the name of a new paper tape file, then run the OS/8 command
+that writes to the punch, for example:
 
 ```text
 .PUNCH DEMO.BA
 ```
 
 The punch does not select an existing program. It prepares a new output tape file in
-`/media/PAPER_TAPE_PUNCH`, and OS/8 fills that tape through the `PTP:` device.
+`/media/PAPER-TAPE`, and OS/8 fills that tape through the `PTP:` device.
 
 **RK05**
 

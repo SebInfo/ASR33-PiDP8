@@ -1049,9 +1049,6 @@ class TeletypeWidget(QWidget):
         if self._punch_file_rect.contains(pos):
             self.frontend.punch_select_output()
             return
-        if self._punch_on_rect.contains(pos):
-            self.frontend.punch_on()
-            return
         if self._punch_off_rect.contains(pos):
             self.frontend.punch_off()
             return
@@ -1573,16 +1570,10 @@ class TeletypeWidget(QWidget):
 
         y = punch_rect.bottom() - 82
         self._punch_mode_rect = QRectF()
-        self._punch_file_rect = QRectF(punch_rect.left() + 18, y - 34, punch_rect.width() - 36, 24)
-        self._punch_on_rect = QRectF(punch_rect.left() + 18, y + 34, (punch_rect.width() - 48) / 2, 28)
-        self._punch_off_rect = QRectF(self._punch_on_rect.right() + 12, y + 34,
-                                      (punch_rect.width() - 48) / 2, 28)
+        self._punch_on_rect = QRectF()
+        self._punch_file_rect = QRectF(punch_rect.left() + 18, y - 18, punch_rect.width() - 36, 28)
+        self._punch_off_rect = QRectF(punch_rect.left() + 18, y + 24, punch_rect.width() - 36, 28)
         self._draw_punch_file_button(painter, self._punch_file_rect)
-        self._draw_punch_button(
-            painter,
-            self._punch_on_rect,
-            "ATTACH",
-        )
         self._draw_punch_button(
             painter,
             self._punch_off_rect,
@@ -1689,12 +1680,12 @@ class TeletypeWidget(QWidget):
         font = QFont("Helvetica", 8)
         font.setBold(True)
         painter.setFont(font)
-        painter.drawText(rect, Qt.AlignCenter, "NEW TAPE NAME")
+        painter.drawText(rect, Qt.AlignCenter, "NEW TAPE")
 
     def _draw_punch_button(self, painter: QPainter, rect: QRectF, label: str) -> None:
         active = (
             self.punch is not None and
-            self.punch.ptp_attached and label == "ATTACH"
+            self.punch.ptp_attached and label == "DETACH"
         )
         painter.setPen(QPen(QColor("#6b6255"), 1))
         painter.setBrush(QColor("#e1d8c5") if active else QColor("#a79f90"))
