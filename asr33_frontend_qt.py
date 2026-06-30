@@ -339,7 +339,7 @@ class QtPaperTapePunch:
         if self.mode != "PTP" or not self.ptp_attached or not self.output_path:
             return 0
         self._ptp_poll_ticks += 1
-        if self._ptp_poll_ticks < 25:
+        if self._ptp_poll_ticks < 5:
             return 0
         self._ptp_poll_ticks = 0
         try:
@@ -408,10 +408,11 @@ class QtPaperTapePunch:
         remote_path = remote_dir.rstrip("/") + "/" + name
         self.backend.send_data(b"\x05")
         QTimer.singleShot(500, lambda: self.backend.send_data(b"detach ptp\r"))
+        quoted_remote_path = self._simh_quoted_path(remote_path).encode("ascii", "ignore")
         QTimer.singleShot(
             1000,
             lambda: self.backend.send_data(
-                f"attach -n ptp {remote_path}\r".encode("ascii", "ignore")
+                b"attach -n ptp " + quoted_remote_path + b"\r"
             ),
         )
         QTimer.singleShot(1500, lambda: self.backend.send_data(b"cont\r"))
@@ -427,6 +428,11 @@ class QtPaperTapePunch:
         self._ptp_poll_ticks = 0
         self._close_ptp_poll()
         return True
+
+    @staticmethod
+    def _simh_quoted_path(path: str) -> str:
+        escaped = path.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
 
     def detach_ptp(self) -> None:
         """Detach SIMH PTP and continue the PDP-8."""
@@ -920,7 +926,7 @@ class TeletypeWidget(QWidget):
         self._scroll_offset_lines = 0
         self.reader = None
         self.punch = None
-        self.show_tape_codes = True
+        self.show_tape_codes = False
         self._reader_load_rect = QRectF()
         self._reader_codes_rect = QRectF()
         self._reader_start_rect = QRectF()
@@ -954,7 +960,7 @@ class TeletypeWidget(QWidget):
     def set_reader(self, reader: QtPaperTapeReader) -> None:
         """Attach the visual paper tape reader to its backend."""
         self.reader = reader
-        self.show_tape_codes = reader.config.get("show_codes", default=True)
+        self.show_tape_codes = reader.config.get("show_codes", default=False)
         self.update()
 
     def set_punch(self, punch: QtPaperTapePunch) -> None:
@@ -1730,9 +1736,8 @@ class TeletypeWidget(QWidget):
 
         visible = int((tape.bottom() - head_y) // pitch_y) + 3
         recent = self.punch.punched_bytes[-visible:]
-        start_y = head_y + max(0, visible - len(recent)) * pitch_y
         for i, byte in enumerate(recent):
-            y = start_y + i * pitch_y + scroll_offset
+            y = head_y + i * pitch_y + scroll_offset
             self._draw_punch_byte_row(
                 painter, first_col_x, y, pitch_x, byte, col_map, sprocket_col,
                 bit_radius, sprocket_radius, punched=True, ghost_bits=True,
