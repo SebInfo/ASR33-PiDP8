@@ -1,0 +1,6 @@
+__pycache__
+archive/
+.venv/
+*.bak*
+PY
+.asr33_ssh_password

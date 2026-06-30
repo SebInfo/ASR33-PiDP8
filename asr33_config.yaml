@@ -1,0 +1,88 @@
+# ASR-33 Emulator configuration
+
+sound:
+  config:
+    lid: "up"  # Options: "up" | "down"
+    mute_state: "unmuted"  # Options: "muted" | "unmuted"
+
+terminal:
+  config:
+    mode: "line"  # Options: "line" | "local"
+    columns: 72
+    rows: 24
+    scrollback: 200
+    autowrap: true  # Enable end of line autowrapping
+    keyboard_uppercase_only: true  # True to convert lowercase to uppercase
+    keyboard_parity_mode: "space"  # Options: "mark" | "space" | "even"
+    send_cr_at_startup: false  # Send carriage return on startup
+    no_print: false  # Options: true | false (disable printing to console)
+    font_path: null  # Path to custom TrueType font file (optional; null means use default)
+    font_size: 20  # Font size for terminal display
+
+backend:
+  ssh_config:
+    username: "pi"
+    host: "192.168.1.78"
+    port: 22
+    command: "/opt/pidp8i/bin/pidp8i start >/dev/null 2>&1; exec /opt/pidp8i/bin/pidp8i"
+
+  # Authentication
+    key_filename: null    # optional
+    password: null                       # optional; null means prompt if needed
+    password_file: ".asr33_ssh_password" # optional local secret file ignored by Git
+    use_agent: false                     # try ssh-agent / Pageant
+    look_for_keys: true                  # try default private keys in ~/.ssh
+    auth_debug: false                    # print failed key attempts in terminal
+
+    # Host key verification
+    expected_fingerprint: null          # optional SHA256:xxxx... fingerprint
+    host_key_policy: "accept-new"       # "strict" | "accept-new" | "off"
+    known_hosts_file: null
+
+    # TOFU (Trust On First Use)
+    tofu_prompt: true                   # show yes/no/once prompt for unknown hosts
+
+data_throttle:
+  config:
+    mode: "throttled"  # Options: "unthrottled" | "throttled"
+    send_rate_cps: 30  # Temporary test speed; ASR-33 realistic speed is 10
+    receive_rate_cps: 30  # Temporary test speed; ASR-33 realistic speed is 10
+
+tape_reader:
+  config:
+    max_rows: 4096  # Maximum number of rows to display in tape reader UI
+    initial_file_path: "."  # Initial path to tape file
+    skip_leading_nulls: true  # Skip past leading nulls when reading
+    auto_stop: true  # Stop reading automatically after first 200 octal or null trailer code
+    set_msb: false  # True to set msb of character to 1 when reading from tape
+    ghost_outline: true  # True to display ghost outline for unpunched holes
+    bit_label_base: 1  # Options: 0: (0-7) | 1: (1-8)
+    ascii_char_mask_msb: true  # True to mask msb when displaying ASCII character on tape UI
+    remote_enabled: true  # Load tapes from the PiDP-8 over SSH/SFTP instead of local files
+    remote_host: "192.168.1.78"
+    remote_port: 22
+    remote_username: "pi"
+    remote_password: null  # optional; prefer SSH keys or agent
+    remote_key_filename: null
+    remote_use_agent: false
+    remote_look_for_keys: true
+    remote_dir: "/media/PAPER_TAPE_PUNCH"
+
+tape_punch:
+  config:
+    max_rows: 4096  # Maximum number of rows to display in tape punch UI
+    initial_file_path: "."  # Initial path to tape file
+    mode: "overwrite"  # Options: "append" | "overwrite"
+    ghost_outline: true  # True to display ghost outline for unpunched holes
+    bit_label_base: 1  # Options: 0: (0-7) | 1: (1-8)
+    ascii_char_mask_msb: true  # True to mask msb when displaying ASCII character on tape UI
+    remote_enabled: true  # Punch tapes to the PiDP-8 over SSH/SFTP instead of local files
+    remote_host: "192.168.1.78"
+    remote_port: 22
+    remote_username: "pi"
+    remote_password: null
+    remote_password_file: ".asr33_ssh_password"
+    remote_key_filename: null
+    remote_use_agent: false
+    remote_look_for_keys: true
+    remote_dir: "/media/PAPER_TAPE_PUNCH"
