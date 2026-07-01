@@ -280,7 +280,9 @@ class QtPaperTapePunch:
         self.output_path = ""
         self.byte_count = 0
         self.punched_bytes: list[int] = []
+        self.pending_punch_bytes: list[int] = []
         self.visual_phase = 0.0
+        self._visual_feed_accumulator = 0.0
         self.visual_activity_ticks = 0
         self._ptp_poll_ssh = None
         self._ptp_poll_sftp = None
@@ -375,22 +377,34 @@ class QtPaperTapePunch:
     def _record_punch_activity(self, data: bytes, count: int) -> None:
         self.byte_count += count
         if data:
-            self.punched_bytes.extend(data)
+            self.pending_punch_bytes.extend(data)
         elif count > 0:
-            self.punched_bytes.extend([0] * min(count, 96))
-        self.visual_phase += count * 0.92
-        self.visual_activity_ticks = max(self.visual_activity_ticks, min(80, 18 + count * 2))
+            self.pending_punch_bytes.extend([0] * count)
+        self.visual_activity_ticks = max(self.visual_activity_ticks, min(600, 80 + count * 3))
+        if len(self.pending_punch_bytes) > 8192:
+            self.pending_punch_bytes = self.pending_punch_bytes[-8192:]
+
+    def advance_visual_feed(self) -> None:
+        if self.visual_activity_ticks <= 0 and not self.pending_punch_bytes:
+            return
+        feed_speed = 0.28
+        if len(self.pending_punch_bytes) > 400:
+            feed_speed = 0.72
+        elif len(self.pending_punch_bytes) > 120:
+            feed_speed = 0.45
+
+        self.visual_phase += feed_speed
+        self._visual_feed_accumulator += feed_speed
+        while self._visual_feed_accumulator >= 1.0 and self.pending_punch_bytes:
+            self.punched_bytes.append(self.pending_punch_bytes.pop(0))
+            self._visual_feed_accumulator -= 1.0
+        if self.visual_activity_ticks > 0:
+            self.visual_activity_ticks -= 1
         if len(self.punched_bytes) > 4096:
             self.punched_bytes = self.punched_bytes[-4096:]
 
-    def advance_visual_feed(self) -> None:
-        if self.visual_activity_ticks <= 0:
-            return
-        self.visual_activity_ticks -= 1
-        self.visual_phase += 0.10
-
     def visual_active(self) -> bool:
-        return self.visual_activity_ticks > 0
+        return self.visual_activity_ticks > 0 or bool(self.pending_punch_bytes)
 
     def attach_ptp(self, parent) -> bool:
         """Attach SIMH PTP to a remote file for clean OS/8 .PUNCH output."""
@@ -431,7 +445,9 @@ class QtPaperTapePunch:
         self.active = False
         self.byte_count = 0
         self.punched_bytes = []
+        self.pending_punch_bytes = []
         self.visual_phase = 0.0
+        self._visual_feed_accumulator = 0.0
         self.visual_activity_ticks = 0
         self._ptp_observed_size = 0
         self._ptp_poll_ticks = 0
@@ -458,6 +474,8 @@ class QtPaperTapePunch:
         self._ptp_observed_size = 0
         self._ptp_poll_ticks = 0
         self.visual_activity_ticks = 0
+        self.pending_punch_bytes = []
+        self._visual_feed_accumulator = 0.0
         self._close_ptp_poll()
 
     def _ensure_ptp_poll_sftp(self):
@@ -1721,14 +1739,6 @@ class TeletypeWidget(QWidget):
         painter.drawLine(int(tape.left() + 4), int(tape.top()), int(tape.left() + 4), int(tape.bottom()))
         painter.drawLine(int(tape.right() - 4), int(tape.top()), int(tape.right() - 4), int(tape.bottom()))
 
-        if self.punch.output_name:
-            label_rect = QRectF(tape.left() + 12, tape.top() + 8, tape.width() - 24, 24)
-            painter.setPen(QPen(QColor("#835d4d"), 1))
-            label_font = QFont("Marker Felt", 12)
-            label_font.setItalic(True)
-            painter.setFont(label_font)
-            painter.drawText(label_rect, Qt.AlignCenter, self.punch.output_name)
-
         col_map = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8}
         sprocket_col = 3
         pitch_y = max(13.0, tape.height() / 18.0)
@@ -1742,6 +1752,16 @@ class TeletypeWidget(QWidget):
         painter.setClipRect(window)
 
         scroll_offset = (self.punch.visual_phase % 1.0) * pitch_y
+        if self.punch.output_name:
+            label_y = tape.top() + 8 + self.punch.visual_phase * pitch_y
+            if tape.top() - 28 <= label_y <= tape.bottom() + 8:
+                label_rect = QRectF(tape.left() + 12, label_y, tape.width() - 24, 24)
+                painter.setPen(QPen(QColor("#835d4d"), 1))
+                label_font = QFont("Marker Felt", 12)
+                label_font.setItalic(True)
+                painter.setFont(label_font)
+                painter.drawText(label_rect, Qt.AlignCenter, self.punch.output_name)
+
         blank_rows = int((head_y - tape.top()) // pitch_y) + 2
         for row in range(blank_rows):
             y = head_y - (blank_rows - row) * pitch_y + scroll_offset
