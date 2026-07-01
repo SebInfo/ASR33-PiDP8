@@ -2699,8 +2699,11 @@ class ASR33QtFrontend(QMainWindow):
         self._tu56_show_buffer = ""
         self._tu56_boot_refresh_queued = False
         self._boot_detection_buffer = ""
+        self._tu56_state_observe_buffer = ""
         self._tu56_activity_ticks = 0
         self._tu56_active_unit = 0
+        self._initial_device_scan_attempts = 0
+        self._initial_device_scan_done = False
         self._blink_ticks = 0
 
         self.setWindowTitle(f"ASR-33 Qt using {self._backend.get_info_string()}")
@@ -2797,6 +2800,7 @@ class ASR33QtFrontend(QMainWindow):
             if self._tu56_show_capture:
                 self._tu56_show_buffer += text
             self._boot_detection_buffer = (self._boot_detection_buffer + text)[-500:]
+            self._observe_tu56_state_text(text)
             if self._detect_tu56_boot_text(self._boot_detection_buffer):
                 self._boot_detection_buffer = ""
                 self.tu56_boot_signal.emit()
@@ -2826,10 +2830,7 @@ class ASR33QtFrontend(QMainWindow):
         self.show()
         self.paper.setFocus(Qt.ActiveWindowFocusReason)
         self.timer.start()
-        QTimer.singleShot(2500, self.refresh_rk05_state)
-        QTimer.singleShot(4600, self.refresh_dt_state_from_simh)
-        QTimer.singleShot(7000, self.refresh_rk05_state)
-        QTimer.singleShot(9000, self.refresh_dt_state_from_simh)
+        QTimer.singleShot(800, self._initial_device_scan)
         self.app.exec()
 
         self.timer.stop()
@@ -2916,6 +2917,26 @@ class ASR33QtFrontend(QMainWindow):
                 return unit
         return {"unit": unit_number, "name": f"RK{unit_number}", "file": "", "attached": False}
 
+    def _backend_channel_ready(self) -> bool:
+        channel = getattr(self._backend, "channel", None)
+        if channel is None:
+            return False
+        return not bool(getattr(channel, "closed", True))
+
+    def _initial_device_scan(self) -> None:
+        if self._initial_device_scan_done:
+            return
+        self._initial_device_scan_attempts += 1
+        if not self._backend_channel_ready():
+            if self._initial_device_scan_attempts < 30:
+                QTimer.singleShot(500, self._initial_device_scan)
+            return
+        self._initial_device_scan_done = True
+        self.refresh_rk05_state()
+        QTimer.singleShot(1700, self.refresh_dt_state_from_simh)
+        QTimer.singleShot(4200, self.refresh_rk05_state)
+        QTimer.singleShot(5900, self.refresh_dt_state_from_simh)
+
     def open_rk05_detail(self, unit_number: int) -> None:
         dialog = self._rk05_detail_dialogs.get(unit_number)
         if dialog is None:
@@ -2927,7 +2948,10 @@ class ASR33QtFrontend(QMainWindow):
         dialog.activateWindow()
 
     def refresh_rk05_state(self) -> None:
+        if not self._backend_channel_ready():
+            return
         if self._rk05_show_capture or self._tu56_show_capture:
+            QTimer.singleShot(700, self.refresh_rk05_state)
             return
         self.rk_controller.show()
 
@@ -3065,7 +3089,10 @@ class ASR33QtFrontend(QMainWindow):
         return units
 
     def refresh_dt_state_from_simh(self) -> None:
+        if not self._backend_channel_ready():
+            return
         if self._rk05_show_capture or self._tu56_show_capture:
+            QTimer.singleShot(700, self.refresh_dt_state_from_simh)
             return
         self.dt_controller.show()
 
@@ -3108,6 +3135,15 @@ class ASR33QtFrontend(QMainWindow):
             if any(unit.get("attached") for unit in self._tu56_units):
                 self._refresh_tu56_panels()
             return
+        self._apply_tu56_parsed_state(parsed)
+
+    def _observe_tu56_state_text(self, text: str) -> None:
+        self._tu56_state_observe_buffer = (self._tu56_state_observe_buffer + text)[-2500:]
+        parsed = SimhDTController.parse_show_dt(self._tu56_state_observe_buffer)
+        if parsed:
+            self._apply_tu56_parsed_state(parsed)
+
+    def _apply_tu56_parsed_state(self, parsed: dict[int, dict]) -> None:
         for unit_number in range(8):
             if unit_number not in parsed:
                 continue
