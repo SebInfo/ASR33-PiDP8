@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -239,22 +240,40 @@ class QtPaperTapeReader:
             if not tape_names:
                 print(f"No paper tape file found in {self.remote_dir}")
                 return False
-            selected, ok = QInputDialog.getItem(
-                parent,
-                "Load Remote Paper Tape",
-                "Tape:",
-                tape_names,
-                0,
-                False,
-            )
-            if not ok or not selected:
-                return False
-            remote_path = self.remote_dir.rstrip("/") + "/" + selected
-            with sftp.open(remote_path, "rb") as f:
-                data = f.read()
-            self._set_tape(selected, data)
-            print(f"Remote paper tape loaded: {remote_path} ({len(data)} bytes)")
-            return True
+            while tape_names:
+                chooser = PaperTapeChooser(parent, tape_names)
+                if chooser.exec() != QDialog.Accepted or not chooser.selected_tape:
+                    return False
+                selected = chooser.selected_tape
+                remote_path = self.remote_dir.rstrip("/") + "/" + selected
+                if chooser.delete_requested:
+                    answer = QMessageBox.question(
+                        parent,
+                        "Delete Paper Tape",
+                        f"Delete {selected} from {self.remote_dir}?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if answer == QMessageBox.Yes:
+                        try:
+                            sftp.remove(remote_path)
+                            tape_names.remove(selected)
+                            print(f"Remote paper tape deleted: {remote_path}")
+                        except Exception as e:
+                            QMessageBox.warning(
+                                parent,
+                                "Delete Paper Tape",
+                                f"Could not delete {selected}:\n{e}",
+                            )
+                            print(f"Could not delete remote paper tape: {e}")
+                    continue
+                with sftp.open(remote_path, "rb") as f:
+                    data = f.read()
+                self._set_tape(selected, data)
+                print(f"Remote paper tape loaded: {remote_path} ({len(data)} bytes)")
+                return True
+            print(f"No paper tape file found in {self.remote_dir}")
+            return False
         except Exception as e:
             print(f"Could not load remote paper tape: {e}")
             return False
@@ -528,6 +547,120 @@ def load_terminal_font(config) -> QFont:
         print(f"Warning: font not found: {font_path}")
 
     return QFont(family or "Menlo", font_size)
+
+
+class PaperTapeChooser(QDialog):
+    """Graphical paper tape chooser for remote reader tapes."""
+
+    def __init__(self, parent, tapes: list[str]):
+        super().__init__(parent)
+        self.setWindowTitle("Load Paper Tape")
+        self.selected_tape = None
+        self.delete_requested = False
+
+        self.list_widget = QListWidget()
+        self.list_widget.setViewMode(QListWidget.IconMode)
+        self.list_widget.setResizeMode(QListWidget.Adjust)
+        self.list_widget.setMovement(QListWidget.Static)
+        self.list_widget.setIconSize(QSize(118, 78))
+        self.list_widget.setGridSize(QSize(172, 124))
+        self.list_widget.itemDoubleClicked.connect(self._load_item)
+
+        icon = self._paper_roll_icon()
+        for tape in tapes:
+            item = QListWidgetItem(icon, os.path.basename(tape))
+            item.setData(Qt.UserRole, tape)
+            self.list_widget.addItem(item)
+
+        self.load_button = QPushButton("LOAD")
+        self.delete_button = QPushButton("DELETE")
+        self.cancel_button = QPushButton("CANCEL")
+        self.load_button.clicked.connect(self._load_selected)
+        self.delete_button.clicked.connect(self._delete_selected)
+        self.cancel_button.clicked.connect(self.reject)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(self.load_button)
+        button_row.addWidget(self.delete_button)
+        button_row.addWidget(self.cancel_button)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.list_widget)
+        layout.addLayout(button_row)
+        self.setLayout(layout)
+        self.resize(620, 420)
+
+    def _current_tape(self) -> str | None:
+        item = self.list_widget.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.UserRole)
+
+    def _load_item(self, item: QListWidgetItem) -> None:
+        self.selected_tape = item.data(Qt.UserRole)
+        self.delete_requested = False
+        self.accept()
+
+    def _load_selected(self) -> None:
+        tape = self._current_tape()
+        if not tape:
+            return
+        self.selected_tape = tape
+        self.delete_requested = False
+        self.accept()
+
+    def _delete_selected(self) -> None:
+        tape = self._current_tape()
+        if not tape:
+            return
+        self.selected_tape = tape
+        self.delete_requested = True
+        self.accept()
+
+    @staticmethod
+    def _paper_roll_icon() -> QIcon:
+        pixmap = QPixmap(132, 88)
+        pixmap.fill(QColor("#f2ead5"))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 26))
+        painter.drawRoundedRect(QRectF(18, 22, 94, 44), 8, 8)
+
+        painter.setPen(QPen(QColor("#8d8068"), 1))
+        painter.setBrush(QColor("#d8c79f"))
+        painter.drawEllipse(QRectF(18, 22, 42, 42))
+        painter.setBrush(QColor("#f4e4ba"))
+        painter.drawEllipse(QRectF(27, 31, 24, 24))
+        painter.setBrush(QColor("#8c7a5d"))
+        painter.drawEllipse(QRectF(35, 39, 8, 8))
+
+        strip = QPainterPath()
+        strip.moveTo(48, 27)
+        strip.cubicTo(64, 19, 88, 19, 108, 27)
+        strip.lineTo(108, 59)
+        strip.cubicTo(88, 67, 64, 67, 48, 59)
+        strip.closeSubpath()
+        painter.setPen(QPen(QColor("#aa9b7a"), 1))
+        painter.setBrush(QColor("#ead6aa"))
+        painter.drawPath(strip)
+
+        painter.setPen(QPen(QColor("#bca77c"), 1))
+        for x in range(56, 104, 10):
+            painter.drawLine(x, 30, x - 2, 58)
+
+        painter.setBrush(QColor("#2b2b28"))
+        painter.setPen(Qt.NoPen)
+        for x in range(54, 108, 9):
+            painter.drawEllipse(QRectF(x, 40, 4, 4))
+        for x in range(58, 104, 12):
+            painter.drawEllipse(QRectF(x, 32, 4, 4))
+            painter.drawEllipse(QRectF(x + 3, 51, 4, 4))
+
+        painter.end()
+        return QIcon(pixmap)
 
 
 class TU56TapeChooser(QDialog):

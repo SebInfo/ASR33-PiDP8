@@ -135,7 +135,9 @@ attach dt0 "/media/TU56/focal69.tu56"
 **Paper Tape**
 
 The paper tape reader lists compatible files from the configured remote directory,
-currently `/media/PAPER-TAPE`, and loads them over SFTP.
+currently `/media/PAPER-TAPE`, as visual paper rolls and loads them over SFTP.
+The reader chooser can also delete obsolete remote tape files, which is useful
+for removing temporary test tapes from the USB key.
 
 The paper tape punch is intentionally limited to the clean SIMH `PTP` workflow.
 Click `NEW TAPE`, type the name of a new paper tape file, then run the OS/8 command
