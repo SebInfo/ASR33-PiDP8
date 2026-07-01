@@ -1,0 +1,6 @@
+PyYAML
+paramiko
+pillow
+fonttools
+pygame-ce
+PySide6

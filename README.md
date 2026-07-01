@@ -32,8 +32,56 @@ This fork is intentionally narrow:
 * no serial backend
 * no Pygame frontend
 
-Tkinter files may still exist in the repository, but the current visual work is in
-`asr33_frontend_qt.py`.
+Tkinter files may still exist in the repository for historical reference, but the
+supported graphical frontend is now PySide6/Qt in `asr33_frontend_qt.py`.
+
+**Quick Install**
+
+From a fresh clone:
+
+```sh
+git clone git@github.com:SebInfo/ASR33-PiDP8.git
+cd ASR33-PiDP8
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Then edit `asr33_config.yaml` and set the PiDP-8 host in these three places:
+
+```yaml
+backend:
+  ssh_config:
+    host: "192.168.1.78"
+
+tape_reader:
+  config:
+    remote_host: "192.168.1.78"
+
+tape_punch:
+  config:
+    remote_host: "192.168.1.78"
+```
+
+For a standard PiDP-8 installation, keep the login as `pi`.
+
+If you prefer to start from a clean template, copy
+`asr33_config.example.yaml` to `asr33_config.yaml` and then edit the same host
+values.
+
+Create the local SSH password file if you use password authentication:
+
+```sh
+printf 'your-password\n' > .asr33_ssh_password
+chmod 600 .asr33_ssh_password
+```
+
+Start the application:
+
+```sh
+python ./asr33emu.py
+```
 
 **PiDP-8 Requirements**
 
@@ -65,19 +113,11 @@ actual IP address of your PiDP-8 on your network.
 The app connects to that command over SSH. It is not a generic terminal emulator and
 does not start a local PDP-8.
 
-**Install**
+**Install Notes**
 
-Create and use a virtual environment:
-
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install PyYAML paramiko pillow fonttools pygame-ce PySide6
-```
-
-On macOS, Qt/PySide6 is provided by the Python package above. On Linux, make sure the
-system has the usual Qt display dependencies installed.
+Dependencies are listed in `requirements.txt`. On macOS, Qt/PySide6 is provided by
+the Python package. On Linux, make sure the system has the usual Qt display
+dependencies installed.
 
 **SSH Password**
 
@@ -96,7 +136,7 @@ SSH keys are also supported through the `backend.ssh_config` settings.
 
 ```sh
 source .venv/bin/activate
-python ./asr33emu.py --frontend qt
+python ./asr33emu.py
 ```
 
 The default configuration file is `asr33_config.yaml`. A different YAML file can be

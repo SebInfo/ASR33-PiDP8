@@ -1,0 +1,85 @@
+# Copy this file to asr33_config.yaml, then adjust the PiDP-8 address.
+
+frontend:
+  type: "qt"
+
+sound:
+  config:
+    lid: "up"
+    mute_state: "unmuted"
+
+terminal:
+  config:
+    mode: "line"
+    columns: 72
+    rows: 24
+    scrollback: 200
+    autowrap: true
+    keyboard_uppercase_only: true
+    keyboard_parity_mode: "space"
+    send_cr_at_startup: false
+    no_print: false
+    font_path: null
+    font_size: 20
+
+backend:
+  ssh_config:
+    username: "pi"
+    host: "pidp8.local"  # Replace with the PiDP-8 IP address if mDNS is unavailable.
+    port: 22
+    command: "/opt/pidp8i/bin/pidp8i start >/dev/null 2>&1; exec /opt/pidp8i/bin/pidp8i"
+    key_filename: null
+    password: null
+    password_file: ".asr33_ssh_password"
+    use_agent: false
+    look_for_keys: true
+    auth_debug: false
+    expected_fingerprint: null
+    host_key_policy: "accept-new"
+    known_hosts_file: null
+    tofu_prompt: true
+
+data_throttle:
+  config:
+    mode: "throttled"
+    send_rate_cps: 30
+    receive_rate_cps: 30
+
+tape_reader:
+  config:
+    max_rows: 4096
+    initial_file_path: "."
+    skip_leading_nulls: true
+    auto_stop: true
+    set_msb: false
+    ghost_outline: true
+    bit_label_base: 1
+    ascii_char_mask_msb: true
+    remote_enabled: true
+    remote_host: "pidp8.local"  # Same PiDP-8 host as backend.ssh_config.host.
+    remote_port: 22
+    remote_username: "pi"
+    remote_password: null
+    remote_key_filename: null
+    remote_use_agent: false
+    remote_look_for_keys: true
+    remote_dir: "/media/PAPER-TAPE"
+
+tape_punch:
+  config:
+    max_rows: 4096
+    initial_file_path: "."
+    mode: "overwrite"
+    ghost_outline: true
+    bit_label_base: 1
+    ascii_char_mask_msb: true
+    remote_enabled: true
+    remote_host: "pidp8.local"  # Same PiDP-8 host as backend.ssh_config.host.
+    remote_port: 22
+    remote_username: "pi"
+    remote_password: null
+    remote_password_file: ".asr33_ssh_password"
+    remote_key_filename: null
+    remote_use_agent: false
+    remote_look_for_keys: true
+    remote_dir: "/media/PAPER-TAPE"

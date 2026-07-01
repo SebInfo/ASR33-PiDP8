@@ -1,5 +1,8 @@
 # ASR-33 Emulator configuration
 
+frontend:
+  type: "qt"
+
 sound:
   config:
     lid: "up"  # Options: "up" | "down"
