@@ -2,6 +2,7 @@
 
 """Minimal PySide6 frontend for the PiDP-8 ASR-33 emulator."""
 
+import errno
 import math
 import os
 import sys
@@ -358,6 +359,14 @@ class QtPaperTapePunch:
             self._ptp_observed_size = size
             self._record_punch_activity(data, delta)
             return delta
+        except FileNotFoundError:
+            return 0
+        except OSError as e:
+            if getattr(e, "errno", None) == errno.ENOENT or "No such file" in str(e):
+                return 0
+            print(f"Could not observe PTP output: {e}")
+            self._close_ptp_poll()
+            return 0
         except Exception as e:
             print(f"Could not observe PTP output: {e}")
             self._close_ptp_poll()
