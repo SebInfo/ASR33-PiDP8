@@ -870,8 +870,8 @@ class SimhDTController:
 
     def show(self) -> None:
         self.frontend._begin_tu56_show_capture()
-        self.simh_command("show dt", return_delay_ms=800)
-        QTimer.singleShot(950, self.frontend._finish_tu56_show_capture)
+        self.simh_command("show dt", return_delay_ms=1100)
+        QTimer.singleShot(1400, self.frontend._finish_tu56_show_capture)
 
     @staticmethod
     def parse_show_dt(text: str) -> dict[int, dict]:
@@ -880,7 +880,7 @@ class SimhDTController:
             line = raw_line.strip()
             if not line:
                 continue
-            match = re.search(r"\bDT\s*([0-7])\b|\bDT([0-7])\s*:", line, re.IGNORECASE)
+            match = re.search(r"\bDTA?\s*-?\s*([0-7])\b|\bDTA?([0-7])\s*:", line, re.IGNORECASE)
             if not match:
                 continue
             unit_number = int(match.group(1) or match.group(2))
@@ -889,10 +889,11 @@ class SimhDTController:
             not_attached = "not attached" in lower
             attached = ("attached" in lower and not not_attached) or active_boot
             filename = ""
-            marker = "attached to "
-            start = lower.find(marker)
-            if start >= 0:
-                filename = line[start + len(marker):].split(",", 1)[0].strip()
+            for marker in ("attached to ", "attached "):
+                start = lower.find(marker)
+                if start >= 0:
+                    filename = line[start + len(marker):].split(",", 1)[0].strip()
+                    break
             if active_boot and not filename:
                 filename = "tc08 system"
             parsed[unit_number] = {
@@ -3070,7 +3071,9 @@ class ASR33QtFrontend(QMainWindow):
 
     def _detect_tu56_boot_text(self, text: str) -> bool:
         lower = text.lower()
-        if "loading os/8 from dectape" not in lower and "dt0: 12b format" not in lower:
+        if "loading os/8 from dectape" in lower:
+            return True
+        if not re.search(r"\bdt\s*-?\s*0\s*:\s*12b format\b", lower):
             return False
         return True
 
@@ -3102,6 +3105,8 @@ class ASR33QtFrontend(QMainWindow):
         self._tu56_show_capture = False
         parsed = SimhDTController.parse_show_dt(self._tu56_show_buffer)
         if not parsed:
+            if any(unit.get("attached") for unit in self._tu56_units):
+                self._refresh_tu56_panels()
             return
         for unit_number in range(8):
             if unit_number not in parsed:
