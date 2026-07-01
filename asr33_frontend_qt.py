@@ -1196,6 +1196,7 @@ class TU56PanelWidget(QWidget):
         self.unit_numbers = unit_numbers
         self._reel_buttons: dict[int, QRectF] = {}
         self._eject_buttons: dict[int, QRectF] = {}
+        self._unit_rects: dict[int, QRectF] = {}
         self._refresh_rect = QRectF()
         self.setMinimumSize(380, 180)
         self.setMaximumHeight(200)
@@ -1207,6 +1208,7 @@ class TU56PanelWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         self._reel_buttons = {}
         self._eject_buttons = {}
+        self._unit_rects = {}
 
         panel = QRectF(0, 0, self.width(), self.height()).adjusted(4, 4, -4, -4)
         painter.setPen(QPen(QColor("#1b1b19"), 2))
@@ -1227,6 +1229,7 @@ class TU56PanelWidget(QWidget):
         drive_h = (panel.height() - 42) / 2
         for idx, number in enumerate(self.unit_numbers):
             rect = QRectF(panel.left() + 10, drive_top + idx * drive_h, panel.width() - 20, drive_h - 8)
+            self._unit_rects[number] = QRectF(rect)
             self._draw_drive(painter, rect, units[number])
 
     def mousePressEvent(self, event) -> None:
@@ -1241,6 +1244,10 @@ class TU56PanelWidget(QWidget):
         for unit, rect in self._eject_buttons.items():
             if rect.contains(pos):
                 self.frontend.eject_tu56_tape(unit)
+                return
+        for unit, rect in self._unit_rects.items():
+            if rect.contains(pos):
+                self.frontend.open_tu56_detail(unit)
                 return
         super().mousePressEvent(event)
 
@@ -1343,6 +1350,279 @@ class TU56PanelWidget(QWidget):
         painter.setPen(QPen(QColor("#111"), 1))
         painter.setBrush(color)
         painter.drawEllipse(rect)
+
+
+class TU56DetailDialog(QDialog):
+    """Zoomed DECtape operator panel for one TU56 pair."""
+
+    def __init__(self, frontend, unit_number: int):
+        super().__init__(frontend)
+        self.frontend = frontend
+        self.pair_start = (unit_number // 2) * 2
+        self.selected_unit = unit_number
+        self.setWindowTitle(f"TU56 DECtape DT{self.pair_start}-DT{self.pair_start + 1}")
+
+        self.panel = TU56DetailPanel(self, frontend, self.pair_start)
+        self.status_label = QLabel("")
+        self.reel_button = QPushButton("Bobine")
+        self.eject_button = QPushButton("Eject")
+        self.refresh_button = QPushButton("Refresh")
+        self.close_button = QPushButton("Close")
+
+        self.reel_button.clicked.connect(lambda: self.frontend.select_tu56_tape(self.selected_unit))
+        self.eject_button.clicked.connect(lambda: self.frontend.eject_tu56_tape(self.selected_unit))
+        self.refresh_button.clicked.connect(self.frontend.refresh_dt_state_from_simh)
+        self.close_button.clicked.connect(self.accept)
+
+        controls = QHBoxLayout()
+        controls.addWidget(self.reel_button)
+        controls.addWidget(self.eject_button)
+        controls.addWidget(self.refresh_button)
+        controls.addWidget(self.close_button)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.panel)
+        layout.addWidget(self.status_label)
+        layout.addLayout(controls)
+        self.setLayout(layout)
+        self.resize(980, 560)
+        self.refresh()
+
+    def select_unit(self, unit_number: int) -> None:
+        self.selected_unit = unit_number
+        self.refresh()
+
+    def refresh(self) -> None:
+        unit = self.frontend.tu56_unit(self.selected_unit)
+        filename = unit.get("file") or "no tape"
+        status = unit.get("status") or ("attached" if unit.get("attached") else "empty")
+        self.status_label.setText(f"DT{self.selected_unit}: {filename} {status}")
+        self.panel.update()
+
+
+class TU56DetailPanel(QWidget):
+    """Large TU56 front panel inspired by the standalone TU56 emulator."""
+
+    def __init__(self, dialog: TU56DetailDialog, frontend, pair_start: int):
+        super().__init__()
+        self.dialog = dialog
+        self.frontend = frontend
+        self.pair_start = pair_start
+        self._transport_rects: dict[int, QRectF] = {}
+        self.setMinimumSize(940, 440)
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        self._transport_rects = {}
+        self._draw_panel(painter, QRectF(self.rect()))
+
+    def mousePressEvent(self, event) -> None:
+        pos = event.position()
+        for unit_number, rect in self._transport_rects.items():
+            if rect.contains(pos):
+                self.dialog.select_unit(unit_number)
+                return
+        super().mousePressEvent(event)
+
+    def _draw_panel(self, painter: QPainter, raw_rect: QRectF) -> None:
+        painter.fillRect(raw_rect, QColor("#111210"))
+        frame = raw_rect.adjusted(12, 12, -12, -12)
+        painter.setPen(QPen(QColor("#c9c3b7"), 4))
+        painter.setBrush(QColor("#1b1c1a"))
+        painter.drawRoundedRect(frame, 14, 14)
+
+        title = QRectF(frame.left() + 20, frame.top() + 12, frame.width() - 40, 26)
+        painter.setFont(QFont("Helvetica", 12, QFont.Bold))
+        painter.setPen(QPen(QColor("#e8dfc8"), 1))
+        painter.drawText(title, Qt.AlignLeft | Qt.AlignVCenter, "TU56 DECtape Transport")
+
+        control = QRectF(frame.left() + 24, frame.top() + 48, frame.width() - 48, 112)
+        painter.setPen(QPen(QColor("#f1eadb"), 2))
+        painter.setBrush(QColor("#0b0c0c"))
+        painter.drawRect(control)
+
+        bay_top = control.bottom() + 18
+        bay_h = frame.bottom() - bay_top - 24
+        bay_w = (frame.width() - 68) / 2
+        for idx, unit_number in enumerate((self.pair_start, self.pair_start + 1)):
+            unit = self.frontend.tu56_unit(unit_number)
+            controls = QRectF(control.left() + 28 + idx * (control.width() / 2), control.top() + 14, control.width() / 2 - 56, 84)
+            bay = QRectF(frame.left() + 24 + idx * (bay_w + 20), bay_top, bay_w, bay_h)
+            self._transport_rects[unit_number] = QRectF(bay)
+            self._draw_controls(painter, controls, unit)
+            self._draw_transport(painter, bay, unit, selected=unit_number == self.dialog.selected_unit)
+
+    def _draw_controls(self, painter: QPainter, rect: QRectF, unit: dict) -> None:
+        unit_number = int(unit["unit"])
+        attached = bool(unit.get("attached"))
+        active = bool(unit.get("active")) and self.frontend.tu56_blink_on()
+        write = active and self.frontend.tu56_blink_on()
+
+        switch_y = rect.top() + 28
+        self._draw_paddle_switch(painter, QRectF(rect.left(), switch_y, 36, 68), "WRITE", write)
+        self._draw_paddle_switch(painter, QRectF(rect.left() + 48, switch_y, 36, 68), "LOCAL", False, bottom_label="REMOTE")
+        self._draw_momentary_switch(painter, QRectF(rect.left() + 96, switch_y, 36, 68), "MOVE", active)
+
+        lamps = [
+            ("WR", write, QColor("#f0efe2")),
+            ("RDY", attached, QColor("#37c45b")),
+            ("SEL", attached and unit_number == self.dialog.selected_unit, QColor("#f1c24a")),
+            ("ACT", active, QColor("#cc2727")),
+        ]
+        lamp_x = rect.left() + 168
+        for idx, (label, lit, color) in enumerate(lamps):
+            self._draw_square_lamp(
+                painter,
+                QRectF(lamp_x + idx * 48, rect.top() + 34, 30, 30),
+                label,
+                color,
+                lit,
+            )
+
+        painter.setFont(QFont("Helvetica", 20, QFont.Bold))
+        painter.setPen(QPen(QColor("#f2f2ec"), 1))
+        painter.drawText(QRectF(rect.right() - 52, rect.top() + 28, 42, 52), Qt.AlignCenter, str(unit_number))
+
+    def _draw_transport(self, painter: QPainter, rect: QRectF, unit: dict, selected: bool) -> None:
+        attached = bool(unit.get("attached"))
+        active = bool(unit.get("active")) and self.frontend.tu56_blink_on()
+        filename = os.path.basename(unit.get("file") or "")
+
+        painter.setPen(QPen(QColor("#eadfca") if selected else QColor("#4b463c"), 3 if selected else 1))
+        painter.setBrush(QColor("#111211"))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        glass = rect.adjusted(18, 18, -18, -54)
+        painter.setPen(QPen(QColor("#262a2a"), 3))
+        painter.setBrush(QColor("#060707"))
+        painter.drawRoundedRect(glass, 5, 5)
+        painter.setBrush(QColor(93, 118, 118, 82))
+        painter.drawRect(glass.adjusted(7, glass.height() * 0.44, -7, -8))
+
+        if attached:
+            self._draw_reel_pair(painter, glass, filename or "DECtape", active)
+        else:
+            self._draw_empty_reel_pair(painter, glass)
+
+        label = QRectF(rect.left() + 20, rect.bottom() - 42, rect.width() - 40, 25)
+        painter.setFont(QFont("Helvetica", 10, QFont.Bold))
+        painter.setPen(QPen(QColor("#d8cfb8"), 1))
+        text = filename if attached else "NO REEL MOUNTED"
+        painter.drawText(label, Qt.AlignCenter, text)
+
+    def _draw_reel_pair(self, painter: QPainter, rect: QRectF, filename: str, active: bool) -> None:
+        radius = min(rect.width() * 0.18, rect.height() * 0.34)
+        cy = rect.center().y() + 5
+        left_cx = rect.left() + rect.width() * 0.27
+        right_cx = rect.right() - rect.width() * 0.27
+        left = QRectF(left_cx - radius, cy - radius, radius * 2, radius * 2)
+        right = QRectF(right_cx - radius, cy - radius, radius * 2, radius * 2)
+
+        painter.setPen(QPen(QColor("#292724"), 8))
+        painter.drawLine(int(left.center().x()), int(left.center().y()), int(right.center().x()), int(right.center().y()))
+        painter.setPen(QPen(QColor("#b5aa91"), 2))
+        painter.setBrush(QColor("#d7ccb1"))
+        painter.drawEllipse(left)
+        painter.drawEllipse(right)
+
+        phase = (self.frontend._blink_ticks % 24) * 15 if active else 0
+        for reel in (left, right):
+            self._draw_reel_spokes(painter, reel, phase)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#2a2824"))
+            painter.drawEllipse(QRectF(reel.center().x() - 10, reel.center().y() - 10, 20, 20))
+            painter.setBrush(QColor("#d6c9a8"))
+            painter.drawEllipse(QRectF(reel.center().x() - 4, reel.center().y() - 4, 8, 8))
+
+        name_rect = QRectF(rect.center().x() - 88, rect.top() + 18, 176, 34)
+        painter.setPen(QPen(QColor("#b9aa85"), 1))
+        painter.setBrush(QColor("#e3d6af"))
+        painter.drawRoundedRect(name_rect, 3, 3)
+        draw_handwritten_pack_label(painter, name_rect, filename, 13)
+
+        painter.setPen(QPen(QColor(228, 235, 232, 70), 3))
+        painter.drawLine(int(rect.left() + 8), int(rect.top() + rect.height() * 0.45), int(rect.right() - 8), int(rect.top() + rect.height() * 0.45))
+
+    def _draw_empty_reel_pair(self, painter: QPainter, rect: QRectF) -> None:
+        radius = min(rect.width() * 0.18, rect.height() * 0.34)
+        cy = rect.center().y() + 5
+        for cx in (rect.left() + rect.width() * 0.27, rect.right() - rect.width() * 0.27):
+            reel = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
+            painter.setPen(QPen(QColor("#37342e"), 2))
+            painter.setBrush(QColor("#171815"))
+            painter.drawEllipse(reel)
+            painter.setPen(QPen(QColor("#2a2824"), 2))
+            painter.drawEllipse(reel.adjusted(radius * 0.35, radius * 0.35, -radius * 0.35, -radius * 0.35))
+        painter.setFont(QFont("Helvetica", 13, QFont.Bold))
+        painter.setPen(QPen(QColor("#5d5549"), 1))
+        painter.drawText(rect, Qt.AlignCenter, "EMPTY")
+
+    def _draw_reel_spokes(self, painter: QPainter, rect: QRectF, phase: int) -> None:
+        center = rect.center()
+        painter.save()
+        painter.translate(center)
+        painter.rotate(phase)
+        painter.translate(-center)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#b9ae96"))
+        for i in range(6):
+            path = QPainterPath()
+            angle = math.radians(i * 60)
+            inner = rect.width() * 0.16
+            outer = rect.width() * 0.42
+            width = rect.width() * 0.08
+            path.moveTo(center.x() + math.cos(angle - 0.18) * inner, center.y() + math.sin(angle - 0.18) * inner)
+            path.lineTo(center.x() + math.cos(angle) * outer, center.y() + math.sin(angle) * outer)
+            path.lineTo(center.x() + math.cos(angle + 0.18) * (inner + width), center.y() + math.sin(angle + 0.18) * (inner + width))
+            path.closeSubpath()
+            painter.drawPath(path)
+        painter.restore()
+
+    def _draw_paddle_switch(self, painter: QPainter, rect: QRectF, label: str, on: bool, bottom_label: str | None = None) -> None:
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#e8e1cf"), 1))
+        painter.drawText(QRectF(rect.left() - 12, rect.top() - 18, rect.width() + 24, 13), Qt.AlignCenter, label)
+        painter.setPen(QPen(QColor("#050605"), 2))
+        painter.setBrush(QColor("#060706"))
+        painter.drawRoundedRect(rect, 3, 3)
+        body = rect.adjusted(4, 5 if on else 20, -4, -20 if on else -5)
+        path = QPainterPath()
+        path.moveTo(body.left() + 3, body.bottom() - 3)
+        path.lineTo(body.left() + 8, body.top() + 7)
+        path.lineTo(body.center().x() - 2, body.top())
+        path.lineTo(body.right() - 3, body.top() + 8)
+        path.lineTo(body.right() - 8, body.bottom() - 4)
+        path.lineTo(body.center().x() + 3, body.bottom())
+        path.closeSubpath()
+        painter.setPen(QPen(QColor("#1b211d"), 1))
+        painter.setBrush(QColor("#5e6b60") if on else QColor("#354038"))
+        painter.drawPath(path)
+        if bottom_label:
+            painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+            painter.setPen(QPen(QColor("#e8e1cf"), 1))
+            painter.drawText(QRectF(rect.left() - 16, rect.bottom() + 4, rect.width() + 32, 13), Qt.AlignCenter, bottom_label)
+
+    def _draw_momentary_switch(self, painter: QPainter, rect: QRectF, label: str, active: bool) -> None:
+        self._draw_paddle_switch(painter, rect, label, active)
+
+    def _draw_square_lamp(self, painter: QPainter, rect: QRectF, label: str, color: QColor, lit: bool) -> None:
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#e8e1cf"), 1))
+        painter.drawText(QRectF(rect.left() - 7, rect.top() - 16, rect.width() + 14, 12), Qt.AlignCenter, label)
+        if lit:
+            glow = QColor(color)
+            glow.setAlpha(90)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(glow)
+            painter.drawRoundedRect(rect.adjusted(-5, -5, 5, 5), 5, 5)
+        painter.setPen(QPen(QColor("#22231f"), 1))
+        painter.setBrush(QColor("#d6d6cc"))
+        painter.drawRect(rect)
+        painter.setPen(QPen(QColor("#adada5"), 1))
+        painter.setBrush(color if lit else QColor("#bdbdb4"))
+        painter.drawEllipse(rect.adjusted(5, 5, -5, -5))
 
 
 class RK05PanelWidget(QWidget):
@@ -2695,6 +2975,7 @@ class ASR33QtFrontend(QMainWindow):
         self._rk05_show_capture = False
         self._rk05_show_buffer = ""
         self._rk05_detail_dialogs: dict[int, RK05DetailDialog] = {}
+        self._tu56_detail_dialogs: dict[int, TU56DetailDialog] = {}
         self._tu56_show_capture = False
         self._tu56_show_buffer = ""
         self._tu56_boot_refresh_queued = False
@@ -3088,6 +3369,23 @@ class ASR33QtFrontend(QMainWindow):
             unit["active"] = unit["unit"] == self._tu56_active_unit and self._tu56_activity_ticks > 0
         return units
 
+    def tu56_unit(self, unit_number: int) -> dict:
+        for unit in self.tu56_units():
+            if int(unit["unit"]) == unit_number:
+                return unit
+        return {"unit": unit_number, "name": f"DT{unit_number}", "file": "", "attached": False, "active": False}
+
+    def open_tu56_detail(self, unit_number: int) -> None:
+        pair_start = (unit_number // 2) * 2
+        dialog = self._tu56_detail_dialogs.get(pair_start)
+        if dialog is None:
+            dialog = TU56DetailDialog(self, unit_number)
+            self._tu56_detail_dialogs[pair_start] = dialog
+        dialog.select_unit(unit_number)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def refresh_dt_state_from_simh(self) -> None:
         if not self._backend_channel_ready():
             return
@@ -3371,6 +3669,8 @@ class ASR33QtFrontend(QMainWindow):
     def _refresh_tu56_panels(self) -> None:
         for panel in getattr(self, "tu56_panels", []):
             panel.update()
+        for dialog in getattr(self, "_tu56_detail_dialogs", {}).values():
+            dialog.refresh()
 
     def _refresh_rk05_panel(self) -> None:
         if hasattr(self, "rk05_panel"):
