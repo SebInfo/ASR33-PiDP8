@@ -897,6 +897,7 @@ class RK05DetailDialog(QDialog):
         unit = self.frontend.rk05_unit(self.unit_number)
         self.run_button.setText("RUN ON" if unit.get("run") else "RUN OFF")
         self.wtprot_button.setText("WT PROT ON" if unit.get("readonly") else "WT PROT OFF")
+        self.pack_button.setEnabled(bool(unit.get("run")))
         status = unit.get("status") or ""
         file_path = unit.get("file") or "no pack"
         self.status_label.setText(f"RK{self.unit_number}: {file_path} {status}")
@@ -953,12 +954,8 @@ class RK05DetailPanel(QWidget):
         painter.setBrush(QColor("#101110"))
         painter.drawRect(lower)
 
-        self._draw_decpack_label(painter, QRectF(lower.left() + 18, lower.top() + 22, 185, 76))
-        self._draw_switch(painter, QRectF(lower.left() + lower.width() * 0.56, lower.top() + 28, 34, 88), "RUN", run)
-        self._draw_switch(painter, QRectF(lower.left() + lower.width() * 0.62, lower.top() + 28, 34, 88), "WTPROT", readonly)
-
         lamps = [
-            ("PWR", True, QColor("#f3f5e7")),
+            ("PWR", run, QColor("#38c65c")),
             ("RDY", ready, QColor("#f3f5e7")),
             ("ONCYL", ready and not active, QColor("#f3f5e7")),
             ("FAULT", fault, QColor("#b52825")),
@@ -967,18 +964,9 @@ class RK05DetailPanel(QWidget):
             ("WT", bool(unit.get("wt")) and self.frontend.rk05_blink_on(), QColor("#f3f5e7")),
             ("RD", active, QColor("#f3f5e7")),
         ]
-        lamp_x = lower.left() + lower.width() * 0.72
-        lamp_y = lower.top() + 28
-        for idx, (label, lit, color) in enumerate(lamps):
-            col = idx % 4
-            row = idx // 4
-            self._draw_square_lamp(
-                painter,
-                QRectF(lamp_x + col * 48, lamp_y + row * 58, 34, 34),
-                label,
-                color if lit else QColor("#d9d9cf"),
-                lit,
-            )
+        self._draw_decpack_label(painter, QRectF(lower.left() + 18, lower.top() + 22, 185, 76))
+        controls = QRectF(lower.left() + lower.width() * 0.45, lower.top() + 28, lower.width() * 0.42, 112)
+        self._draw_rk05_controls(painter, controls, run, readonly, lamps)
 
         unit_box = QRectF(lower.right() - 74, lower.top() + 42, 48, 64)
         painter.setPen(QPen(QColor("#20211f"), 2))
@@ -1001,7 +989,7 @@ class RK05DetailPanel(QWidget):
         painter.setPen(QPen(QColor("#c7c0aa"), 1))
         painter.setBrush(QColor("#d8cfb8"))
         painter.drawRoundedRect(tape, 4, 4)
-        painter.setFont(QFont("Courier", 18))
+        painter.setFont(QFont("Menlo", 18))
         painter.setPen(QPen(QColor("#9d3e48"), 2))
         painter.drawText(tape.adjusted(12, 0, -12, 0), Qt.AlignCenter, filename or "DECpack")
         painter.setPen(QPen(QColor(230, 235, 232, 90), 3))
@@ -1020,30 +1008,92 @@ class RK05DetailPanel(QWidget):
         painter.setFont(QFont("Helvetica", 10))
         painter.drawText(QRectF(rect.left() + 8, rect.bottom() - 20, rect.width() - 16, 16), Qt.AlignCenter, "digital equipment corporation")
 
-    def _draw_switch(self, painter: QPainter, rect: QRectF, label: str, on: bool) -> None:
+    def _draw_rk05_controls(
+            self, painter: QPainter, rect: QRectF, run: bool, readonly: bool,
+            lamps: list[tuple[str, bool, QColor]]) -> None:
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#101110"))
+        painter.drawRect(rect.adjusted(-8, -8, 8, 8))
+
+        switch_w = 38
+        switch_h = 92
+        switch_top = rect.top() + 18
+        run_rect = QRectF(rect.left() + 2, switch_top, switch_w, switch_h)
+        prot_rect = QRectF(run_rect.right() + 8, switch_top, switch_w, switch_h)
+        self._draw_rk05_paddle_switch(painter, run_rect, "RUN", run)
+        self._draw_rk05_paddle_switch(painter, prot_rect, "WT PROT", readonly)
         painter.setFont(QFont("Helvetica", 8, QFont.Bold))
-        painter.setPen(QPen(QColor("#d7d2c7"), 1))
-        painter.drawText(QRectF(rect.left() - 10, rect.top() - 18, rect.width() + 20, 14), Qt.AlignCenter, label)
-        painter.setPen(QPen(QColor("#030303"), 2))
-        painter.setBrush(QColor("#38443b") if on else QColor("#667064"))
-        body = QRectF(rect.left(), rect.top() + (0 if on else 14), rect.width(), rect.height() - 14)
-        painter.drawRoundedRect(body, 5, 5)
-        painter.setPen(QPen(QColor("#899487"), 2))
-        painter.drawLine(int(body.left() + 6), int(body.top() + 6), int(body.right() - 6), int(body.top() + 3))
+        painter.setPen(QPen(QColor("#f0f0e8"), 1))
+        painter.drawText(
+            QRectF(run_rect.left() - 4, run_rect.bottom() + 3, prot_rect.right() - run_rect.left() + 8, 13),
+            Qt.AlignCenter,
+            "LOAD",
+        )
+
+        lamp_left = prot_rect.right() + 48
+        lamp_top = rect.top() + 20
+        lamp_size = 36
+        gap_x = 12
+        gap_y = 40
+        for idx, (label, lit, color) in enumerate(lamps):
+            col = idx % 4
+            row = idx // 4
+            self._draw_square_lamp(
+                painter,
+                QRectF(lamp_left + col * (lamp_size + gap_x), lamp_top + row * (lamp_size + gap_y), lamp_size, lamp_size),
+                label,
+                color,
+                lit,
+            )
+
+    def _draw_rk05_paddle_switch(self, painter: QPainter, rect: QRectF, label: str, on: bool) -> None:
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#f0f0e8"), 1))
+        painter.drawText(QRectF(rect.left() - 8, rect.top() - 18, rect.width() + 16, 13), Qt.AlignCenter, label)
+
+        well = rect.adjusted(-4, -2, 4, 2)
+        painter.setPen(QPen(QColor("#050605"), 2))
+        painter.setBrush(QColor("#060706"))
+        painter.drawRoundedRect(well, 3, 3)
+
+        body = rect.adjusted(1, 3 if on else 12, -1, -8 if on else -2)
+        path = QPainterPath()
+        path.moveTo(body.left() + 4, body.bottom() - 4)
+        path.lineTo(body.left() + 8, body.top() + 6)
+        path.lineTo(body.left() + body.width() * 0.42, body.top())
+        path.lineTo(body.right() - 4, body.top() + 7)
+        path.lineTo(body.right() - 8, body.bottom() - 6)
+        path.lineTo(body.left() + body.width() * 0.52, body.bottom())
+        path.closeSubpath()
+        painter.setPen(QPen(QColor("#1b211d"), 1))
+        painter.setBrush(QColor("#556056") if on else QColor("#3b453d"))
+        painter.drawPath(path)
+        painter.setPen(QPen(QColor("#7b8779"), 2))
+        painter.drawLine(int(body.left() + 10), int(body.top() + 10), int(body.right() - 8), int(body.top() + 5))
+        painter.setPen(QPen(QColor("#222821"), 2))
+        painter.drawLine(int(body.left() + 6), int(body.bottom() - 8), int(body.right() - 10), int(body.bottom() - 3))
 
     def _draw_square_lamp(self, painter: QPainter, rect: QRectF, label: str, color: QColor, lit: bool) -> None:
-        painter.setFont(QFont("Helvetica", 7, QFont.Bold))
-        painter.setPen(QPen(QColor("#d7d2c7"), 1))
-        painter.drawText(QRectF(rect.left() - 8, rect.top() - 15, rect.width() + 16, 12), Qt.AlignCenter, label)
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#f0f0e8"), 1))
+        painter.drawText(QRectF(rect.left() - 8, rect.top() - 17, rect.width() + 16, 13), Qt.AlignCenter, label)
         if lit:
             glow = QColor(color)
             glow.setAlpha(90)
             painter.setPen(Qt.NoPen)
             painter.setBrush(glow)
-            painter.drawEllipse(rect.adjusted(-8, -8, 8, 8))
-        painter.setPen(QPen(QColor("#34332f"), 1))
-        painter.setBrush(color if lit else QColor("#d0d0c8"))
-        painter.drawRoundedRect(rect, 3, 3)
+            painter.drawRoundedRect(rect.adjusted(-5, -5, 5, 5), 5, 5)
+        bezel = rect.adjusted(-2, -2, 2, 2)
+        painter.setPen(QPen(QColor("#25251f"), 1))
+        painter.setBrush(QColor("#d7d7ce"))
+        painter.drawRect(bezel)
+        lens = rect.adjusted(4, 4, -4, -4)
+        painter.setPen(QPen(QColor("#b8b8ad"), 1))
+        painter.setBrush(color if lit else QColor("#c7c7be"))
+        painter.drawEllipse(lens)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 75 if lit else 42))
+        painter.drawEllipse(lens.adjusted(4, 3, -11, -12))
 
 
 class TU56PanelWidget(QWidget):
@@ -1315,7 +1365,7 @@ class RK05PanelWidget(QWidget):
 
         lamp_y = lower.top() + 44
         lamps = [
-            ("PWR", True, QColor("#eeeede")),
+            ("PWR", bool(unit.get("run")), QColor("#31c15b")),
             ("RDY", ready, QColor("#eeeede")),
             ("FLT", bool(unit.get("fault")), QColor("#b52825")),
             ("RD", active, QColor("#eeeede")),
@@ -2734,6 +2784,13 @@ class ASR33QtFrontend(QMainWindow):
         self.rk_controller.show()
 
     def select_rk05_pack(self, unit_number: int) -> None:
+        if not self._rk05_units[unit_number].get("run"):
+            QMessageBox.information(
+                self,
+                f"RK{unit_number} Power Off",
+                "Set RUN to ON before loading a DECpack.",
+            )
+            return
         selected = self._choose_rk05_image(unit_number)
         if not selected:
             return
@@ -2749,7 +2806,6 @@ class ASR33QtFrontend(QMainWindow):
             if unit["unit"] == unit_number:
                 unit["file"] = selected
                 unit["attached"] = True
-                unit["run"] = True
                 unit["fault"] = False
                 unit["status"] = "attached"
                 break
