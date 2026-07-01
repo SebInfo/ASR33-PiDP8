@@ -5,6 +5,7 @@
 import errno
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -853,6 +854,56 @@ class SimhRKController:
         return parsed
 
 
+class SimhDTController:
+    """Small SIMH DECtape helper using the existing interactive SSH channel."""
+
+    def __init__(self, frontend):
+        self.frontend = frontend
+
+    def simh_command(self, command: str, return_delay_ms: int = 500) -> None:
+        backend = self.frontend._backend
+        if backend is None or not hasattr(backend, "send_data"):
+            return
+        backend.send_data(b"\x05")
+        QTimer.singleShot(180, lambda: backend.send_data(command.encode("ascii", errors="ignore") + b"\r"))
+        QTimer.singleShot(return_delay_ms, lambda: backend.send_data(b"cont\r"))
+
+    def show(self) -> None:
+        self.frontend._begin_tu56_show_capture()
+        self.simh_command("show dt", return_delay_ms=800)
+        QTimer.singleShot(950, self.frontend._finish_tu56_show_capture)
+
+    @staticmethod
+    def parse_show_dt(text: str) -> dict[int, dict]:
+        parsed: dict[int, dict] = {}
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = re.search(r"\bDT\s*([0-7])\b|\bDT([0-7])\s*:", line, re.IGNORECASE)
+            if not match:
+                continue
+            unit_number = int(match.group(1) or match.group(2))
+            lower = line.lower()
+            active_boot = "12b format" in lower or "buffering file in memory" in lower
+            not_attached = "not attached" in lower
+            attached = ("attached" in lower and not not_attached) or active_boot
+            filename = ""
+            marker = "attached to "
+            start = lower.find(marker)
+            if start >= 0:
+                filename = line[start + len(marker):].split(",", 1)[0].strip()
+            if active_boot and not filename:
+                filename = "tc08 system"
+            parsed[unit_number] = {
+                "attached": attached,
+                "file": filename,
+                "active": active_boot,
+                "status": "tc08 system" if active_boot else "refreshed",
+            }
+        return parsed
+
+
 class RK05DetailDialog(QDialog):
     """Zoomed operator panel for one RK05 unit."""
 
@@ -1144,6 +1195,7 @@ class TU56PanelWidget(QWidget):
         self.unit_numbers = unit_numbers
         self._reel_buttons: dict[int, QRectF] = {}
         self._eject_buttons: dict[int, QRectF] = {}
+        self._refresh_rect = QRectF()
         self.setMinimumSize(380, 180)
         self.setMaximumHeight(200)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -1166,6 +1218,8 @@ class TU56PanelWidget(QWidget):
         painter.setFont(font)
         painter.setPen(QPen(QColor("#d4c8a6"), 1))
         painter.drawText(panel.adjusted(12, 8, -12, 0), Qt.AlignLeft | Qt.AlignTop, title)
+        self._refresh_rect = QRectF(panel.right() - 72, panel.top() + 8, 58, 18)
+        self._draw_button(painter, self._refresh_rect, "Refresh", False)
 
         units = {unit["unit"]: unit for unit in self.frontend.tu56_units()}
         drive_top = panel.top() + 30
@@ -1176,6 +1230,9 @@ class TU56PanelWidget(QWidget):
 
     def mousePressEvent(self, event) -> None:
         pos = event.position()
+        if self._refresh_rect.contains(pos):
+            self.frontend.refresh_dt_state_from_simh()
+            return
         for unit, rect in self._reel_buttons.items():
             if rect.contains(pos):
                 self.frontend.select_tu56_tape(unit)
@@ -2597,6 +2654,7 @@ class ASR33QtFrontend(QMainWindow):
     """First Qt step: terminal display, SSH input, status controls, and sound."""
 
     display_signal = Signal()
+    tu56_boot_signal = Signal()
 
     def __init__(self, terminal, backend, config, sound=None):
         self.app = QApplication.instance() or QApplication(sys.argv)
@@ -2636,6 +2694,10 @@ class ASR33QtFrontend(QMainWindow):
         self._rk05_show_capture = False
         self._rk05_show_buffer = ""
         self._rk05_detail_dialogs: dict[int, RK05DetailDialog] = {}
+        self._tu56_show_capture = False
+        self._tu56_show_buffer = ""
+        self._tu56_boot_refresh_queued = False
+        self._boot_detection_buffer = ""
         self._tu56_activity_ticks = 0
         self._tu56_active_unit = 0
         self._blink_ticks = 0
@@ -2657,6 +2719,7 @@ class ASR33QtFrontend(QMainWindow):
         self.paper.set_reader(self.paper_tape_reader)
         self.paper.set_punch(self.paper_tape_punch)
         self.rk_controller = SimhRKController(self)
+        self.dt_controller = SimhDTController(self)
         self.rk05_panel = RK05PanelWidget(self)
         self.tu56_panels = [
             TU56PanelWidget(self, (0, 1)),
@@ -2717,6 +2780,7 @@ class ASR33QtFrontend(QMainWindow):
         self.setCentralWidget(container)
 
         self.display_signal.connect(self._mark_display_dirty)
+        self.tu56_boot_signal.connect(self._handle_tu56_boot_detected)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._periodic_tasks)
         self.timer.setInterval(20)
@@ -2726,8 +2790,15 @@ class ASR33QtFrontend(QMainWindow):
     def receive_data(self, data: bytes) -> None:
         """Handle incoming terminal data from the backend thread."""
         if data:
+            text = data.decode("utf-8", errors="ignore")
             if self._rk05_show_capture:
-                self._rk05_show_buffer += data.decode("utf-8", errors="ignore")
+                self._rk05_show_buffer += text
+            if self._tu56_show_capture:
+                self._tu56_show_buffer += text
+            self._boot_detection_buffer = (self._boot_detection_buffer + text)[-500:]
+            if self._detect_tu56_boot_text(self._boot_detection_buffer):
+                self._boot_detection_buffer = ""
+                self.tu56_boot_signal.emit()
             self._rk05_activity_ticks = 35
             if any(unit["attached"] for unit in self._tu56_units):
                 self._tu56_activity_ticks = 35
@@ -2750,6 +2821,7 @@ class ASR33QtFrontend(QMainWindow):
         self.paper.setFocus(Qt.ActiveWindowFocusReason)
         self.timer.start()
         QTimer.singleShot(2500, self.refresh_rk05_state)
+        QTimer.singleShot(3200, self.refresh_dt_state_from_simh)
         self.app.exec()
 
         self.timer.stop()
@@ -2975,6 +3047,61 @@ class ASR33QtFrontend(QMainWindow):
             unit["active"] = unit["unit"] == self._tu56_active_unit and self._tu56_activity_ticks > 0
         return units
 
+    def refresh_dt_state_from_simh(self) -> None:
+        self.dt_controller.show()
+
+    def _detect_tu56_boot_text(self, text: str) -> bool:
+        lower = text.lower()
+        if "loading os/8 from dectape" not in lower and "dt0: 12b format" not in lower:
+            return False
+        return True
+
+    def _handle_tu56_boot_detected(self) -> None:
+        self._mark_tu56_unit_loaded(0, "tc08 system", active=True, status="tc08 system")
+        if not self._tu56_boot_refresh_queued:
+            self._tu56_boot_refresh_queued = True
+            QTimer.singleShot(1800, self._refresh_dt_after_boot)
+
+    def _refresh_dt_after_boot(self) -> None:
+        self._tu56_boot_refresh_queued = False
+        self.refresh_dt_state_from_simh()
+
+    def _mark_tu56_unit_loaded(self, unit_number: int, filename: str, active: bool, status: str = "") -> None:
+        unit = self._tu56_units[unit_number]
+        unit["file"] = filename
+        unit["attached"] = True
+        unit["status"] = status
+        self._tu56_active_unit = unit_number
+        if active:
+            self._tu56_activity_ticks = 60
+        self._refresh_tu56_panels()
+
+    def _begin_tu56_show_capture(self) -> None:
+        self._tu56_show_buffer = ""
+        self._tu56_show_capture = True
+
+    def _finish_tu56_show_capture(self) -> None:
+        self._tu56_show_capture = False
+        parsed = SimhDTController.parse_show_dt(self._tu56_show_buffer)
+        if not parsed:
+            return
+        for unit_number, state in parsed.items():
+            unit = self._tu56_units[unit_number]
+            if state.get("attached"):
+                unit["attached"] = True
+                unit["file"] = state.get("file") or unit.get("file") or "system DECtape"
+                unit["status"] = state.get("status", "refreshed")
+                if state.get("active"):
+                    self._tu56_active_unit = unit_number
+                    self._tu56_activity_ticks = 60
+            else:
+                unit["attached"] = False
+                unit["file"] = ""
+                unit["status"] = "not attached"
+                if self._tu56_active_unit == unit_number:
+                    self._tu56_activity_ticks = 0
+        self._refresh_tu56_panels()
+
     def select_tu56_tape(self, unit_number: int) -> None:
         selected = self._choose_tu56_image(unit_number)
         if not selected:
@@ -2986,6 +3113,7 @@ class ASR33QtFrontend(QMainWindow):
                 unit["file"] = selected
                 unit["attached"] = True
                 break
+        QTimer.singleShot(1200, self.refresh_dt_state_from_simh)
         self._refresh_tu56_panels()
 
     def eject_tu56_tape(self, unit_number: int) -> None:
@@ -2998,6 +3126,7 @@ class ASR33QtFrontend(QMainWindow):
                 break
         if self._tu56_active_unit == unit_number:
             self._tu56_activity_ticks = 0
+        QTimer.singleShot(900, self.refresh_dt_state_from_simh)
         self._refresh_tu56_panels()
 
     def _choose_rk05_image(self, unit_number: int) -> str | None:
