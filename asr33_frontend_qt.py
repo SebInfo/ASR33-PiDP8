@@ -785,6 +785,267 @@ class RK05PackChooser(QDialog):
         return QIcon(pixmap)
 
 
+class SimhRKController:
+    """Small SIMH RK command helper using the existing interactive SSH channel."""
+
+    def __init__(self, frontend):
+        self.frontend = frontend
+
+    def simh_command(self, command: str, return_delay_ms: int = 500) -> None:
+        backend = self.frontend._backend
+        if backend is None or not hasattr(backend, "send_data"):
+            return
+        backend.send_data(b"\x05")
+        QTimer.singleShot(180, lambda: backend.send_data(command.encode("ascii", errors="ignore") + b"\r"))
+        QTimer.singleShot(return_delay_ms, lambda: backend.send_data(b"cont\r"))
+
+    def attach(self, unit_number: int, path: str, readonly: bool = False) -> None:
+        backend = self.frontend._backend
+        if backend is None or not hasattr(backend, "send_data"):
+            return
+        unit = f"rk{unit_number}"
+        quoted = self.frontend._simh_quoted_path(path)
+        attach = f'attach {"-r " if readonly else ""}{unit} {quoted}'
+        backend.send_data(b"\x05")
+        QTimer.singleShot(220, lambda: backend.send_data(f"detach {unit}\r".encode("ascii")))
+        QTimer.singleShot(620, lambda: backend.send_data((attach + "\r").encode("ascii", errors="ignore")))
+        QTimer.singleShot(1120, lambda: backend.send_data(b"cont\r"))
+
+    def detach(self, unit_number: int) -> None:
+        self.simh_command(f"detach rk{unit_number}", return_delay_ms=650)
+
+    def show(self) -> None:
+        self.frontend._begin_rk05_show_capture()
+        self.simh_command("show rk", return_delay_ms=800)
+        QTimer.singleShot(950, self.frontend._finish_rk05_show_capture)
+
+    @staticmethod
+    def parse_show_rk(text: str) -> dict[int, dict]:
+        parsed: dict[int, dict] = {}
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            upper = line.upper()
+            if not upper.startswith("RK"):
+                continue
+            parts = upper.split(None, 1)
+            if not parts or len(parts[0]) < 3 or not parts[0][2:].isdigit():
+                continue
+            unit_number = int(parts[0][2:])
+            if unit_number not in (0, 1, 2, 3):
+                continue
+            attached = "ATTACHED TO" in upper
+            not_attached = "NOT ATTACHED" in upper
+            readonly = "READ ONLY" in upper or "WRITE LOCK" in upper or "WRITE PROTECT" in upper
+            write_enabled = "WRITE ENABLED" in upper
+            filename = ""
+            if attached:
+                marker = "attached to "
+                lower = line.lower()
+                start = lower.find(marker)
+                if start >= 0:
+                    filename = line[start + len(marker):].split(",", 1)[0].strip()
+            parsed[unit_number] = {
+                "attached": attached and not not_attached,
+                "file": filename,
+                "readonly": readonly and not write_enabled,
+                "fault": False,
+            }
+        return parsed
+
+
+class RK05DetailDialog(QDialog):
+    """Zoomed operator panel for one RK05 unit."""
+
+    def __init__(self, frontend, unit_number: int):
+        super().__init__(frontend)
+        self.frontend = frontend
+        self.unit_number = unit_number
+        self.setWindowTitle(f"RK{unit_number} RK05 DECpack")
+        self.panel = RK05DetailPanel(frontend, unit_number)
+        self.status_label = QLabel("")
+        self.run_button = QPushButton()
+        self.wtprot_button = QPushButton()
+        self.pack_button = QPushButton("Pack / Load")
+        self.eject_button = QPushButton("Eject")
+        self.refresh_button = QPushButton("Refresh")
+        self.close_button = QPushButton("Close")
+
+        self.run_button.clicked.connect(lambda: self.frontend.toggle_rk05_run(unit_number))
+        self.wtprot_button.clicked.connect(lambda: self.frontend.toggle_rk05_write_protect(unit_number))
+        self.pack_button.clicked.connect(lambda: self.frontend.select_rk05_pack(unit_number))
+        self.eject_button.clicked.connect(lambda: self.frontend.eject_rk05_pack(unit_number))
+        self.refresh_button.clicked.connect(self.frontend.refresh_rk05_state)
+        self.close_button.clicked.connect(self.accept)
+
+        controls = QHBoxLayout()
+        controls.addWidget(self.run_button)
+        controls.addWidget(self.wtprot_button)
+        controls.addWidget(self.pack_button)
+        controls.addWidget(self.eject_button)
+        controls.addWidget(self.refresh_button)
+        controls.addWidget(self.close_button)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.panel)
+        layout.addWidget(self.status_label)
+        layout.addLayout(controls)
+        self.setLayout(layout)
+        self.resize(920, 560)
+        self.refresh()
+
+    def refresh(self) -> None:
+        unit = self.frontend.rk05_unit(self.unit_number)
+        self.run_button.setText("RUN ON" if unit.get("run") else "RUN OFF")
+        self.wtprot_button.setText("WT PROT ON" if unit.get("readonly") else "WT PROT OFF")
+        status = unit.get("status") or ""
+        file_path = unit.get("file") or "no pack"
+        self.status_label.setText(f"RK{self.unit_number}: {file_path} {status}")
+        self.panel.update()
+
+
+class RK05DetailPanel(QWidget):
+    """Large painted RK05 faceplate inspired by the DECpack front panel."""
+
+    def __init__(self, frontend, unit_number: int):
+        super().__init__()
+        self.frontend = frontend
+        self.unit_number = unit_number
+        self.setMinimumSize(860, 440)
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        unit = self.frontend.rk05_unit(self.unit_number)
+        self._draw_panel(painter, self.rect(), unit)
+
+    def _draw_panel(self, painter: QPainter, raw_rect, unit: dict) -> None:
+        rect = QRectF(raw_rect).adjusted(10, 10, -10, -10)
+        attached = bool(unit.get("attached"))
+        active = bool(unit.get("active")) and self.frontend.rk05_blink_on()
+        load_active = bool(unit.get("load"))
+        fault = bool(unit.get("fault"))
+        readonly = bool(unit.get("readonly"))
+        run = bool(unit.get("run"))
+        ready = attached and run and not fault
+
+        painter.fillRect(raw_rect, QColor("#0f100f"))
+        painter.setPen(QPen(QColor("#d7d2c7"), 4))
+        painter.setBrush(QColor("#191a18"))
+        painter.drawRoundedRect(rect, 18, 18)
+
+        window = QRectF(rect.left() + 28, rect.top() + 28, rect.width() - 56, rect.height() * 0.44)
+        painter.setPen(QPen(QColor("#0b0c0b"), 4))
+        painter.setBrush(QColor("#050606"))
+        painter.drawRect(window)
+        painter.setBrush(QColor(75, 94, 95, 95))
+        painter.drawRect(window.adjusted(12, window.height() * 0.48, -12, -16))
+
+        if attached:
+            self._draw_pack_window(painter, window, os.path.basename(unit.get("file") or "mounted"))
+        else:
+            painter.setFont(QFont("Helvetica", 16))
+            painter.setPen(QPen(QColor("#4d493f"), 1))
+            painter.drawText(window, Qt.AlignCenter, "EMPTY")
+
+        lower = QRectF(rect.left() + 28, window.bottom() + 22, rect.width() - 56, rect.bottom() - window.bottom() - 42)
+        painter.setPen(QPen(QColor("#d7d2c7"), 2))
+        painter.setBrush(QColor("#101110"))
+        painter.drawRect(lower)
+
+        self._draw_decpack_label(painter, QRectF(lower.left() + 18, lower.top() + 22, 185, 76))
+        self._draw_switch(painter, QRectF(lower.left() + lower.width() * 0.56, lower.top() + 28, 34, 88), "RUN", run)
+        self._draw_switch(painter, QRectF(lower.left() + lower.width() * 0.62, lower.top() + 28, 34, 88), "WTPROT", readonly)
+
+        lamps = [
+            ("PWR", True, QColor("#f3f5e7")),
+            ("RDY", ready, QColor("#f3f5e7")),
+            ("ONCYL", ready and not active, QColor("#f3f5e7")),
+            ("FAULT", fault, QColor("#b52825")),
+            ("WTPROT", readonly, QColor("#f3f5e7")),
+            ("LOAD", load_active, QColor("#f3f5e7")),
+            ("WT", bool(unit.get("wt")) and self.frontend.rk05_blink_on(), QColor("#f3f5e7")),
+            ("RD", active, QColor("#f3f5e7")),
+        ]
+        lamp_x = lower.left() + lower.width() * 0.72
+        lamp_y = lower.top() + 28
+        for idx, (label, lit, color) in enumerate(lamps):
+            col = idx % 4
+            row = idx // 4
+            self._draw_square_lamp(
+                painter,
+                QRectF(lamp_x + col * 48, lamp_y + row * 58, 34, 34),
+                label,
+                color if lit else QColor("#d9d9cf"),
+                lit,
+            )
+
+        unit_box = QRectF(lower.right() - 74, lower.top() + 42, 48, 64)
+        painter.setPen(QPen(QColor("#20211f"), 2))
+        painter.setBrush(QColor("#050606"))
+        painter.drawRect(unit_box)
+        unit_font = QFont("Helvetica", 34)
+        unit_font.setBold(True)
+        painter.setFont(unit_font)
+        painter.setPen(QPen(QColor("#f2f2ec"), 1))
+        painter.drawText(unit_box, Qt.AlignCenter, str(self.unit_number))
+
+        painter.setFont(QFont("Helvetica", 10))
+        painter.setPen(QPen(QColor("#d7d2c7"), 1))
+        name = os.path.basename(unit.get("file") or "")
+        if name:
+            painter.drawText(QRectF(lower.left() + 230, lower.top() + 62, 250, 26), Qt.AlignCenter, name)
+
+    def _draw_pack_window(self, painter: QPainter, rect: QRectF, filename: str) -> None:
+        tape = QRectF(rect.left() + 90, rect.bottom() - 100, rect.width() - 180, 60)
+        painter.setPen(QPen(QColor("#c7c0aa"), 1))
+        painter.setBrush(QColor("#d8cfb8"))
+        painter.drawRoundedRect(tape, 4, 4)
+        painter.setFont(QFont("Courier", 18))
+        painter.setPen(QPen(QColor("#9d3e48"), 2))
+        painter.drawText(tape.adjusted(12, 0, -12, 0), Qt.AlignCenter, filename or "DECpack")
+        painter.setPen(QPen(QColor(230, 235, 232, 90), 3))
+        painter.drawLine(int(rect.left() + 20), int(rect.bottom() - 120), int(rect.right() - 20), int(rect.bottom() - 122))
+
+    def _draw_decpack_label(self, painter: QPainter, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor("#e8e8df"), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect)
+        painter.setFont(QFont("Helvetica", 28, QFont.Bold))
+        painter.setPen(QPen(QColor("#f0f0ea"), 1))
+        painter.drawText(QRectF(rect.left() + 8, rect.top() + 7, rect.width() - 16, 34), Qt.AlignLeft, "decpack")
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.drawText(QRectF(rect.left() + 18, rect.top() + 43, 50, 12), Qt.AlignLeft, "RK05")
+        painter.drawText(QRectF(rect.right() - 68, rect.top() + 43, 58, 12), Qt.AlignRight, "2200 BPI")
+        painter.setFont(QFont("Helvetica", 10))
+        painter.drawText(QRectF(rect.left() + 8, rect.bottom() - 20, rect.width() - 16, 16), Qt.AlignCenter, "digital equipment corporation")
+
+    def _draw_switch(self, painter: QPainter, rect: QRectF, label: str, on: bool) -> None:
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#d7d2c7"), 1))
+        painter.drawText(QRectF(rect.left() - 10, rect.top() - 18, rect.width() + 20, 14), Qt.AlignCenter, label)
+        painter.setPen(QPen(QColor("#030303"), 2))
+        painter.setBrush(QColor("#38443b") if on else QColor("#667064"))
+        body = QRectF(rect.left(), rect.top() + (0 if on else 14), rect.width(), rect.height() - 14)
+        painter.drawRoundedRect(body, 5, 5)
+        painter.setPen(QPen(QColor("#899487"), 2))
+        painter.drawLine(int(body.left() + 6), int(body.top() + 6), int(body.right() - 6), int(body.top() + 3))
+
+    def _draw_square_lamp(self, painter: QPainter, rect: QRectF, label: str, color: QColor, lit: bool) -> None:
+        painter.setFont(QFont("Helvetica", 7, QFont.Bold))
+        painter.setPen(QPen(QColor("#d7d2c7"), 1))
+        painter.drawText(QRectF(rect.left() - 8, rect.top() - 15, rect.width() + 16, 12), Qt.AlignCenter, label)
+        if lit:
+            glow = QColor(color)
+            glow.setAlpha(90)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(glow)
+            painter.drawEllipse(rect.adjusted(-8, -8, 8, 8))
+        painter.setPen(QPen(QColor("#34332f"), 1))
+        painter.setBrush(color if lit else QColor("#d0d0c8"))
+        painter.drawRoundedRect(rect, 3, 3)
+
+
 class TU56PanelWidget(QWidget):
     """Painted DEC TU56 panel representing two DECtape transports."""
 
@@ -945,6 +1206,7 @@ class RK05PanelWidget(QWidget):
         self.frontend = frontend
         self._pack_buttons: dict[int, QRectF] = {}
         self._eject_buttons: dict[int, QRectF] = {}
+        self._unit_rects: dict[int, QRectF] = {}
         self.setMinimumSize(756, 368)
         self.setMaximumHeight(400)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -955,6 +1217,7 @@ class RK05PanelWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         self._pack_buttons = {}
         self._eject_buttons = {}
+        self._unit_rects = {}
 
         panel = QRectF(0, 0, self.width(), self.height()).adjusted(4, 4, -4, -4)
         painter.setPen(QPen(QColor("#c9c3b7"), 2))
@@ -981,6 +1244,7 @@ class RK05PanelWidget(QWidget):
                 cell_w,
                 cell_h,
             )
+            self._unit_rects[idx] = QRectF(rect)
             self._draw_drive(painter, rect, unit)
 
     def mousePressEvent(self, event) -> None:
@@ -993,12 +1257,17 @@ class RK05PanelWidget(QWidget):
             if rect.contains(pos):
                 self.frontend.eject_rk05_pack(unit)
                 return
+        for unit, rect in self._unit_rects.items():
+            if rect.contains(pos):
+                self.frontend.open_rk05_detail(unit)
+                return
         super().mousePressEvent(event)
 
     def _draw_drive(self, painter: QPainter, rect: QRectF, unit: dict) -> None:
         attached = bool(unit.get("attached"))
         active = bool(unit.get("active")) and self.frontend.rk05_blink_on()
         unit_number = int(unit["unit"])
+        ready = attached and bool(unit.get("run")) and not bool(unit.get("fault"))
 
         painter.setPen(QPen(QColor("#545047"), 1))
         painter.setBrush(QColor("#20211f"))
@@ -1045,18 +1314,18 @@ class RK05PanelWidget(QWidget):
         self._draw_button(painter, eject_button, "Eject", attached)
 
         lamp_y = lower.top() + 44
-        self._draw_lamp(
-            painter,
-            QRectF(pack_button.left(), lamp_y, 10, 10),
-            QColor("#31c15b") if attached else QColor("#473f38"),
-            attached,
-        )
-        self._draw_lamp(
-            painter,
-            QRectF(pack_button.left() + 22, lamp_y, 10, 10),
-            QColor("#d83325") if active else QColor("#473f38"),
-            active,
-        )
+        lamps = [
+            ("PWR", True, QColor("#eeeede")),
+            ("RDY", ready, QColor("#eeeede")),
+            ("FLT", bool(unit.get("fault")), QColor("#b52825")),
+            ("RD", active, QColor("#eeeede")),
+        ]
+        for idx, (label, lit, color) in enumerate(lamps):
+            lx = pack_button.left() + idx * 25
+            self._draw_lamp(painter, QRectF(lx, lamp_y, 10, 10), color if lit else QColor("#473f38"), lit)
+            painter.setFont(QFont("Helvetica", 5))
+            painter.setPen(QPen(QColor("#d4c8a6"), 1))
+            painter.drawText(QRectF(lx - 6, lamp_y + 11, 24, 8), Qt.AlignCenter, label)
 
     def _draw_pack_in_window(self, painter: QPainter, rect: QRectF, filename: str) -> None:
         pack = QRectF(rect.left() + 28, rect.top() + rect.height() * 0.34, rect.width() - 56, rect.height() * 0.52)
@@ -2244,10 +2513,10 @@ class ASR33QtFrontend(QMainWindow):
         self.display_update_needed = True
         self.tape_running_state = False
         self._rk05_units = [
-            {"unit": 0, "name": "RK0", "file": "os8/v3d.rk05", "attached": True, "active": False},
-            {"unit": 1, "name": "RK1", "file": "", "attached": False, "active": False},
-            {"unit": 2, "name": "RK2", "file": "", "attached": False, "active": False},
-            {"unit": 3, "name": "RK3", "file": "", "attached": False, "active": False},
+            {"unit": 0, "name": "RK0", "file": "os8/v3d.rk05", "attached": True, "readonly": False, "run": True, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
+            {"unit": 1, "name": "RK1", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
+            {"unit": 2, "name": "RK2", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
+            {"unit": 3, "name": "RK3", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
         ]
         self._tu56_units = [
             {"unit": i, "name": f"DT{i}", "file": "", "attached": False, "active": False}
@@ -2255,6 +2524,9 @@ class ASR33QtFrontend(QMainWindow):
         ]
         self._rk05_activity_ticks = 0
         self._rk05_active_unit = 0
+        self._rk05_show_capture = False
+        self._rk05_show_buffer = ""
+        self._rk05_detail_dialogs: dict[int, RK05DetailDialog] = {}
         self._tu56_activity_ticks = 0
         self._tu56_active_unit = 0
         self._blink_ticks = 0
@@ -2275,6 +2547,7 @@ class ASR33QtFrontend(QMainWindow):
         self.paper = TeletypeWidget(self, load_terminal_font(self.cfg), terminal_columns)
         self.paper.set_reader(self.paper_tape_reader)
         self.paper.set_punch(self.paper_tape_punch)
+        self.rk_controller = SimhRKController(self)
         self.rk05_panel = RK05PanelWidget(self)
         self.tu56_panels = [
             TU56PanelWidget(self, (0, 1)),
@@ -2344,6 +2617,8 @@ class ASR33QtFrontend(QMainWindow):
     def receive_data(self, data: bytes) -> None:
         """Handle incoming terminal data from the backend thread."""
         if data:
+            if self._rk05_show_capture:
+                self._rk05_show_buffer += data.decode("utf-8", errors="ignore")
             self._rk05_activity_ticks = 35
             if any(unit["attached"] for unit in self._tu56_units):
                 self._tu56_activity_ticks = 35
@@ -2365,6 +2640,7 @@ class ASR33QtFrontend(QMainWindow):
         self.show()
         self.paper.setFocus(Qt.ActiveWindowFocusReason)
         self.timer.start()
+        QTimer.singleShot(2500, self.refresh_rk05_state)
         self.app.exec()
 
         self.timer.stop()
@@ -2438,29 +2714,144 @@ class ASR33QtFrontend(QMainWindow):
             unit["active"] = unit["unit"] == self._rk05_active_unit and self.rk05_active()
         return units
 
+    def rk05_unit(self, unit_number: int) -> dict:
+        for unit in self.rk05_units():
+            if int(unit["unit"]) == unit_number:
+                return unit
+        return {"unit": unit_number, "name": f"RK{unit_number}", "file": "", "attached": False}
+
+    def open_rk05_detail(self, unit_number: int) -> None:
+        dialog = self._rk05_detail_dialogs.get(unit_number)
+        if dialog is None:
+            dialog = RK05DetailDialog(self, unit_number)
+            self._rk05_detail_dialogs[unit_number] = dialog
+        dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def refresh_rk05_state(self) -> None:
+        self.rk_controller.show()
+
     def select_rk05_pack(self, unit_number: int) -> None:
         selected = self._choose_rk05_image(unit_number)
         if not selected:
             return
-        self._attach_rk05_image(unit_number, selected)
+        if unit_number == 0 and self._rk05_units[0].get("attached"):
+            if not self._confirm_rk0_risky_action("Changing RK0 may stop or crash the running OS/8 system."):
+                return
+        selected = self._resolve_remote_media_selection(selected, ".rk05")
+        readonly = bool(self._rk05_units[unit_number].get("readonly"))
+        self._set_rk05_load(unit_number, True, "attaching")
+        self._attach_rk05_image(unit_number, selected, readonly=readonly)
         self._rk05_active_unit = unit_number
         for unit in self._rk05_units:
             if unit["unit"] == unit_number:
                 unit["file"] = selected
                 unit["attached"] = True
+                unit["run"] = True
+                unit["fault"] = False
+                unit["status"] = "attached"
                 break
+        self._pulse_rk05_lamp(unit_number, "rd")
+        if not readonly:
+            self._pulse_rk05_lamp(unit_number, "wt")
+        QTimer.singleShot(1400, lambda: self._set_rk05_load(unit_number, False, ""))
+        QTimer.singleShot(1600, self.refresh_rk05_state)
         self._refresh_rk05_panel()
 
     def eject_rk05_pack(self, unit_number: int) -> None:
-        self._detach_simh_media("rk", unit_number)
+        if unit_number == 0:
+            if not self._confirm_rk0_risky_action("RK0 is probably the OS/8 system disk. Detaching it may stop or crash the running system."):
+                return
+        self._set_rk05_load(unit_number, True, "detaching")
+        self.rk_controller.detach(unit_number)
         for unit in self._rk05_units:
             if unit["unit"] == unit_number:
                 unit["file"] = ""
                 unit["attached"] = False
+                unit["run"] = False
                 unit["active"] = False
+                unit["status"] = "detached"
                 break
         if self._rk05_active_unit == unit_number:
             self._rk05_activity_ticks = 0
+        QTimer.singleShot(1000, lambda: self._set_rk05_load(unit_number, False, ""))
+        QTimer.singleShot(1200, self.refresh_rk05_state)
+        self._refresh_rk05_panel()
+
+    def toggle_rk05_run(self, unit_number: int) -> None:
+        unit = self._rk05_units[unit_number]
+        unit["run"] = not bool(unit.get("run"))
+        unit["status"] = "run" if unit["run"] else "stopped"
+        self._refresh_rk05_panel()
+
+    def toggle_rk05_write_protect(self, unit_number: int) -> None:
+        unit = self._rk05_units[unit_number]
+        if unit_number == 0 and unit.get("attached"):
+            if not self._confirm_rk0_risky_action("Changing RK0 write protect requires detach/attach and may disturb OS/8."):
+                return
+        unit["readonly"] = not bool(unit.get("readonly"))
+        unit["status"] = "write protected" if unit["readonly"] else "write enabled"
+        if unit.get("attached") and unit.get("file"):
+            self._set_rk05_load(unit_number, True, "reattaching")
+            self._attach_rk05_image(unit_number, unit["file"], readonly=unit["readonly"])
+            self._pulse_rk05_lamp(unit_number, "rd")
+            QTimer.singleShot(1400, lambda: self._set_rk05_load(unit_number, False, ""))
+            QTimer.singleShot(1600, self.refresh_rk05_state)
+        self._refresh_rk05_panel()
+
+    def _confirm_rk0_risky_action(self, message: str) -> bool:
+        answer = QMessageBox.warning(
+            self,
+            "RK0 System Disk",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _set_rk05_load(self, unit_number: int, active: bool, status: str) -> None:
+        unit = self._rk05_units[unit_number]
+        unit["load"] = active
+        if status:
+            unit["status"] = status
+        self._rk05_active_unit = unit_number
+        self._rk05_activity_ticks = 35 if active else self._rk05_activity_ticks
+        self._refresh_rk05_panel()
+
+    def _pulse_rk05_lamp(self, unit_number: int, lamp: str) -> None:
+        if lamp not in ("rd", "wt"):
+            return
+        self._rk05_units[unit_number][lamp] = True
+        QTimer.singleShot(700, lambda: self._clear_rk05_lamp(unit_number, lamp))
+
+    def _clear_rk05_lamp(self, unit_number: int, lamp: str) -> None:
+        if 0 <= unit_number < len(self._rk05_units):
+            self._rk05_units[unit_number][lamp] = False
+            self._refresh_rk05_panel()
+
+    def _begin_rk05_show_capture(self) -> None:
+        self._rk05_show_buffer = ""
+        self._rk05_show_capture = True
+
+    def _finish_rk05_show_capture(self) -> None:
+        self._rk05_show_capture = False
+        parsed = SimhRKController.parse_show_rk(self._rk05_show_buffer)
+        if not parsed:
+            return
+        for unit_number, state in parsed.items():
+            unit = self._rk05_units[unit_number]
+            unit["attached"] = state.get("attached", False)
+            unit["file"] = state.get("file") or (unit.get("file") if unit["attached"] else "")
+            unit["readonly"] = state.get("readonly", False)
+            unit["fault"] = state.get("fault", False)
+            if unit["attached"] and not unit.get("run"):
+                unit["run"] = True
+            if not unit["attached"]:
+                unit["run"] = False
+            unit["load"] = False
+            unit["status"] = "refreshed"
         self._refresh_rk05_panel()
 
     def tu56_units(self) -> list[dict]:
@@ -2586,7 +2977,7 @@ class ASR33QtFrontend(QMainWindow):
     @staticmethod
     def _remote_media_roots(extension: str) -> list[str]:
         if extension == ".rk05":
-            return ["/media/RK05", "os8", "/opt/pidp8i/share/media"]
+            return ["/media/RK05", "/opt/pidp8i/share/media/os8"]
         if extension == ".tu56":
             return ["/media/TU56", "/opt/pidp8i/share/media", "os8"]
         return ["/media", "os8", "/opt/pidp8i/share/media"]
@@ -2595,9 +2986,9 @@ class ASR33QtFrontend(QMainWindow):
     def _shell_quote(value: str) -> str:
         return "'" + value.replace("'", "'\"'\"'") + "'"
 
-    def _attach_rk05_image(self, unit_number: int, image: str) -> None:
+    def _attach_rk05_image(self, unit_number: int, image: str, readonly: bool = False) -> None:
         image = self._resolve_remote_media_selection(image, ".rk05")
-        self._attach_simh_media("rk", unit_number, image)
+        self.rk_controller.attach(unit_number, image, readonly=readonly)
 
     def _attach_tu56_image(self, unit_number: int, image: str) -> None:
         image = self._resolve_remote_media_selection(image, ".tu56")
@@ -2675,6 +3066,8 @@ class ASR33QtFrontend(QMainWindow):
     def _refresh_rk05_panel(self) -> None:
         if hasattr(self, "rk05_panel"):
             self.rk05_panel.update()
+        for dialog in getattr(self, "_rk05_detail_dialogs", {}).values():
+            dialog.refresh()
 
     @staticmethod
     def _simh_quoted_path(path: str) -> str:

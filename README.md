@@ -212,6 +212,15 @@ RK3  empty until a pack is selected
 Click `Pack` on an RK unit to choose a `.rk05` image. Click `Eject` to detach it.
 An attached unit shows a green lamp. Recent activity blinks red.
 
+Click an RK05 unit body to open a larger operator panel. The detailed view shows the
+DECpack window, RUN and WT PROT switches, PWR/RDY/ONCYL/FAULT lamps, WT PROT/LOAD/WT/RD
+activity lamps, Pack/Eject controls, and a manual `Refresh` button. `WT PROT` attaches
+the selected image read-only with SIMH `attach -r rkN "path"`.
+
+RK0 is treated as the likely OS/8 system disk. Ejecting it, changing its mounted pack,
+or changing write protection asks for confirmation because it can stop or crash the
+running system.
+
 **TU56 DECtape**
 
 The TU56 panels represent SIMH `dt` units:
