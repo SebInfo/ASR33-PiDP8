@@ -1383,63 +1383,76 @@ class TeletypeWidget(QWidget):
 
     def _draw_teletype_logo(self, painter: QPainter, rect: QRectF) -> None:
         painter.save()
-        ink = QColor("#4f5358")
+        ink = QColor("#34373a")
+        body_color = QColor("#f1e7c8")
 
-        logo_font = QFont("Helvetica", 10)
+        logo_font = QFont("Helvetica", 9)
         logo_font.setBold(True)
-        logo_font.setLetterSpacing(QFont.PercentageSpacing, 132)
+        logo_font.setLetterSpacing(QFont.PercentageSpacing, 165)
         painter.setFont(logo_font)
         painter.setPen(QPen(ink, 1))
-        painter.drawText(QRectF(rect.left() + 2, rect.top(), rect.width(), 16),
-                         Qt.AlignLeft | Qt.AlignTop, "TELETYPE")
+        painter.drawText(
+            QRectF(rect.left() + 4, rect.top(), rect.width() - 8, 16),
+            Qt.AlignCenter | Qt.AlignTop,
+            "TELETYPE",
+        )
 
-        mark_top = rect.top() + 20
-        mark_h = 40
-        left = QRectF(rect.left() + 2, mark_top, 60, mark_h)
-        right = QRectF(rect.left() + 101, mark_top, 60, mark_h)
+        mark = QRectF(rect.left() + 8, rect.top() + 23, rect.width() - 20, 36)
+        path = QPainterPath()
+        path.moveTo(mark.left(), mark.top() + 32)
+        path.lineTo(mark.left() + 5, mark.top() + 8)
+        path.lineTo(mark.left() + 55, mark.top() + 8)
+        path.lineTo(mark.left() + 55, mark.top())
+        path.lineTo(mark.right() - 55, mark.top())
+        path.lineTo(mark.right() - 55, mark.top() + 8)
+        path.lineTo(mark.right() - 5, mark.top() + 8)
+        path.lineTo(mark.right(), mark.top() + 32)
+        path.lineTo(mark.right() - 16, mark.top() + 32)
+        path.cubicTo(
+            mark.right() - 24, mark.top() + 15,
+            mark.right() - 45, mark.top() + 15,
+            mark.right() - 52, mark.top() + 32,
+        )
+        path.lineTo(mark.left() + 52, mark.top() + 32)
+        path.cubicTo(
+            mark.left() + 45, mark.top() + 15,
+            mark.left() + 24, mark.top() + 15,
+            mark.left() + 16, mark.top() + 32,
+        )
+        path.closeSubpath()
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(ink)
-        for shape_rect, mirrored in ((left, False), (right, True)):
-            path = QPainterPath()
-            if not mirrored:
-                path.moveTo(shape_rect.left(), shape_rect.top() + shape_rect.height() * 0.76)
-                path.cubicTo(shape_rect.left() + 9, shape_rect.top() + 10,
-                             shape_rect.left() + 26, shape_rect.top() + 5,
-                             shape_rect.right(), shape_rect.top() + 5)
-                path.lineTo(shape_rect.right(), shape_rect.top() + 16)
-                path.cubicTo(shape_rect.left() + 30, shape_rect.top() + 16,
-                             shape_rect.left() + 24, shape_rect.top() + 25,
-                             shape_rect.left() + 24, shape_rect.bottom() - 5)
-                path.lineTo(shape_rect.left() + 9, shape_rect.bottom() - 5)
-                path.cubicTo(shape_rect.left() + 7, shape_rect.bottom() - 13,
-                             shape_rect.left() + 3, shape_rect.bottom() - 20,
-                             shape_rect.left(), shape_rect.top() + shape_rect.height() * 0.76)
-            else:
-                path.moveTo(shape_rect.right(), shape_rect.top() + shape_rect.height() * 0.76)
-                path.cubicTo(shape_rect.right() - 9, shape_rect.top() + 10,
-                             shape_rect.right() - 26, shape_rect.top() + 5,
-                             shape_rect.left(), shape_rect.top() + 5)
-                path.lineTo(shape_rect.left(), shape_rect.top() + 16)
-                path.cubicTo(shape_rect.right() - 30, shape_rect.top() + 16,
-                             shape_rect.right() - 24, shape_rect.top() + 25,
-                             shape_rect.right() - 24, shape_rect.bottom() - 5)
-                path.lineTo(shape_rect.right() - 9, shape_rect.bottom() - 5)
-                path.cubicTo(shape_rect.right() - 7, shape_rect.bottom() - 13,
-                             shape_rect.right() - 3, shape_rect.bottom() - 20,
-                             shape_rect.right(), shape_rect.top() + shape_rect.height() * 0.76)
-            path.closeSubpath()
-            painter.drawPath(path)
+        painter.drawPath(path)
 
-        emblem = QRectF(rect.left() + 59, mark_top + 8, 44, 30)
+        painter.setBrush(body_color)
+        painter.drawEllipse(QRectF(mark.left() + 17, mark.top() + 13, 34, 34))
+        painter.drawEllipse(QRectF(mark.right() - 51, mark.top() + 13, 34, 34))
+
+        emblem = QRectF(mark.center().x() - 19, mark.top() + 5, 38, 38)
+        painter.setBrush(body_color)
+        painter.drawEllipse(emblem)
+
         painter.setPen(QPen(ink, 3))
-        painter.setBrush(QColor("#f1e7c8"))
-        painter.drawRoundedRect(emblem, 12, 12)
-        painter.setPen(QPen(ink, 2))
-        painter.drawLine(int(emblem.left() + 11), int(emblem.top() + 8),
-                         int(emblem.right() - 11), int(emblem.top() + 8))
-        painter.drawLine(int(emblem.center().x()), int(emblem.top() + 8),
-                         int(emblem.center().x()), int(emblem.bottom() - 7))
+        waveform = QPainterPath()
+        waveform.moveTo(emblem.left() + 9, emblem.center().y() + 8)
+        waveform.lineTo(emblem.left() + 13, emblem.center().y() + 8)
+        waveform.lineTo(emblem.left() + 13, emblem.center().y() - 8)
+        waveform.lineTo(emblem.center().x() - 1, emblem.center().y() - 8)
+        waveform.lineTo(emblem.center().x() - 1, emblem.center().y() + 8)
+        waveform.lineTo(emblem.right() - 13, emblem.center().y() + 8)
+        waveform.lineTo(emblem.right() - 13, emblem.center().y() - 8)
+        waveform.lineTo(emblem.right() - 9, emblem.center().y() - 8)
+        painter.drawPath(waveform)
+
+        reg = QRectF(mark.right() + 3, mark.bottom() - 12, 10, 10)
+        painter.setPen(QPen(ink, 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(reg)
+        reg_font = QFont("Helvetica", 6)
+        reg_font.setBold(True)
+        painter.setFont(reg_font)
+        painter.drawText(reg, Qt.AlignCenter, "R")
         painter.restore()
 
     def _draw_platen_scroll(self, painter: QPainter, paper_rect: QRectF, cap_rect: QRectF) -> None:
