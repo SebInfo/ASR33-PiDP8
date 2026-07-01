@@ -141,6 +141,24 @@ class QtPaperTapeReader:
         self.active = False
         self.state = "FREE"
 
+    def unload(self) -> None:
+        self.tape_loaded = False
+        self.active = False
+        self.state = "FREE"
+        self.tape_name = ""
+        self.tape_data = b""
+        self.position = 0
+        self.stop_cause = ""
+        self.trailing_o000_idx = None
+        self.trailing_o200_idx = None
+
+    def set_position(self, position: int) -> None:
+        if not self.tape_data:
+            self.position = 0
+            return
+        self.position = max(0, min(len(self.tape_data) - 1, int(position)))
+        self.stop_cause = ""
+
     def process(self) -> None:
         if not self.active:
             return
@@ -1092,6 +1110,7 @@ class TeletypeWidget(QWidget):
         self._reader_start_rect = QRectF()
         self._reader_stop_rect = QRectF()
         self._reader_free_rect = QRectF()
+        self._reader_tape_window_rect = QRectF()
         self._punch_file_rect = QRectF()
         self._punch_mode_rect = QRectF()
         self._punch_on_rect = QRectF()
@@ -1100,6 +1119,9 @@ class TeletypeWidget(QWidget):
         self._scroll_end_rect = QRectF()
         self._dragging_scroll = False
         self._last_scroll_drag_y = 0.0
+        self._dragging_reader_tape = False
+        self._reader_drag_start_y = 0.0
+        self._reader_drag_start_position = 0
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(self.recommended_window_width(), 760)
 
@@ -1196,6 +1218,12 @@ class TeletypeWidget(QWidget):
     def mousePressEvent(self, event) -> None:
         pos = event.position()
         self.setFocus(Qt.MouseFocusReason)
+        if self._can_manually_move_reader_tape() and self._reader_tape_window_rect.contains(pos):
+            self._dragging_reader_tape = True
+            self._reader_drag_start_y = pos.y()
+            self._reader_drag_start_position = self.reader.position
+            event.accept()
+            return
         if self._reader_load_rect.contains(pos):
             self.frontend.load_reader_tape()
             return
@@ -1229,7 +1257,25 @@ class TeletypeWidget(QWidget):
             return
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        pos = event.position()
+        if self._can_manually_move_reader_tape() and self._reader_tape_window_rect.contains(pos):
+            self.frontend.reader_unload()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event) -> None:
+        if self._dragging_reader_tape:
+            y = event.position().y()
+            dy = self._reader_drag_start_y - y
+            threshold = self._reader_manual_row_pitch()
+            delta = int(dy / threshold)
+            if self.reader is not None:
+                self.reader.set_position(self._reader_drag_start_position + delta)
+                self.update()
+            event.accept()
+            return
         if self._dragging_scroll:
             y = event.position().y()
             dy = y - self._last_scroll_drag_y
@@ -1242,11 +1288,27 @@ class TeletypeWidget(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._dragging_reader_tape:
+            self._dragging_reader_tape = False
+            event.accept()
+            return
         if self._dragging_scroll:
             self._dragging_scroll = False
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def _can_manually_move_reader_tape(self) -> bool:
+        return bool(
+            self.reader is not None and
+            self.reader.tape_loaded and
+            self.reader.state == "FREE"
+        )
+
+    def _reader_manual_row_pitch(self) -> float:
+        if self._reader_tape_window_rect.height() > 0:
+            return max(13.0, self._reader_tape_window_rect.height() / 18.0)
+        return 14.0
 
     def _layout_rects(self) -> tuple[QRectF, QRectF, QRectF]:
         w = self.width()
@@ -1527,16 +1589,17 @@ class TeletypeWidget(QWidget):
             reader_rect.width() - 44,
             max(290, window_bottom - reader_rect.top() - 34),
         )
+        self._reader_tape_window_rect = QRectF(window)
         painter.setBrush(QColor(50, 58, 60, 135))
         painter.drawRoundedRect(window, 4, 4)
         loaded = bool(self.reader and self.reader.tape_loaded)
+        reader_state = self.reader.state if self.reader is not None else "FREE"
         if loaded:
             self._draw_reader_tape(painter, window)
         else:
             painter.setPen(QPen(QColor("#d4c8a6"), 1))
             painter.setFont(QFont("Helvetica", 8))
             painter.drawText(window, Qt.AlignCenter, "NO TAPE")
-        reader_state = self.reader.state if self.reader is not None else "FREE"
         self._draw_reader_clamp(painter, window, loaded, reader_state)
 
         painter.setPen(QPen(QColor("#514c43"), 1))
@@ -1556,10 +1619,11 @@ class TeletypeWidget(QWidget):
             if len(name) > 20:
                 name = name[:17] + "..."
             pct = int(self.reader.progress() * 100)
+            note = "FREE: DRAG / DBL-CLICK OUT" if reader_state == "FREE" else f"{pct}% READ"
             painter.drawText(
                 QRectF(reader_rect.left() + 18, label_top + 42, reader_rect.width() - 62, 42),
                 Qt.AlignLeft | Qt.AlignTop,
-                f"{name}\n{pct}% READ",
+                f"{name}\n{note}",
             )
 
         self._reader_load_rect = QRectF(reader_rect.left() + 18, y - 34, reader_rect.width() - 36, 24)
@@ -1568,7 +1632,7 @@ class TeletypeWidget(QWidget):
         self._reader_stop_rect = QRectF(self._reader_start_rect.right() + 6, y, button_w, 26)
         self._reader_free_rect = QRectF(self._reader_stop_rect.right() + 6, y, button_w, 26)
         self._draw_codes_button(painter, self._reader_codes_rect)
-        self._draw_load_button(painter, self._reader_load_rect)
+        self._draw_load_button(painter, self._reader_load_rect, enabled=reader_state == "FREE", loaded=loaded)
         self._draw_reader_button(painter, self._reader_start_rect, "START")
         self._draw_reader_button(painter, self._reader_stop_rect, "STOP")
         self._draw_reader_button(painter, self._reader_free_rect, "FREE")
@@ -1671,15 +1735,21 @@ class TeletypeWidget(QWidget):
         painter.setFont(font)
         painter.drawText(rect, Qt.AlignCenter, label)
 
-    def _draw_load_button(self, painter: QPainter, rect: QRectF) -> None:
+    def _draw_load_button(self, painter: QPainter, rect: QRectF, enabled: bool, loaded: bool) -> None:
         painter.setPen(QPen(QColor("#6b6255"), 1))
-        painter.setBrush(QColor("#d2c8b5"))
+        painter.setBrush(QColor("#d2c8b5") if enabled else QColor("#8f887b"))
         painter.drawRoundedRect(rect, 5, 5)
-        painter.setPen(QPen(QColor("#2f2b25"), 1))
+        painter.setPen(QPen(QColor("#2f2b25") if enabled else QColor("#5b554a"), 1))
         font = QFont("Helvetica", 8)
         font.setBold(True)
         painter.setFont(font)
-        painter.drawText(rect, Qt.AlignCenter, "LOAD TAPE")
+        if not enabled:
+            label = "LOCKED"
+        elif loaded:
+            label = "CHANGE TAPE"
+        else:
+            label = "LOAD TAPE"
+        painter.drawText(rect, Qt.AlignCenter, label)
 
     def _draw_codes_button(self, painter: QPainter, rect: QRectF) -> None:
         painter.setPen(QPen(QColor("#6b6255"), 1))
@@ -2698,6 +2768,14 @@ class ASR33QtFrontend(QMainWindow):
         self._refresh_buttons()
 
     def load_reader_tape(self) -> None:
+        if self.paper_tape_reader.state != "FREE":
+            QMessageBox.information(
+                self,
+                "Paper Tape Reader Locked",
+                "Set the paper tape reader lever to FREE before loading or changing a tape.",
+            )
+            self.paper.update()
+            return
         if self.paper_tape_reader.load_tape(self):
             self.paper.update()
 
@@ -2711,6 +2789,12 @@ class ASR33QtFrontend(QMainWindow):
 
     def reader_free(self) -> None:
         self.paper_tape_reader.free()
+        self.paper.update()
+
+    def reader_unload(self) -> None:
+        if self.paper_tape_reader.state != "FREE":
+            return
+        self.paper_tape_reader.unload()
         self.paper.update()
 
     def punch_select_output(self) -> None:

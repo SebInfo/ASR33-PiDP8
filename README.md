@@ -183,6 +183,10 @@ The reader lever is modeled as a mechanical control: `FREE` releases the tape so
 can be inserted or adjusted, `STOP` holds it without reading, and `START` feeds it to
 the PDP-8. `FREE` does not send data to SIMH.
 
+To handle tape manually, first set the reader to `FREE`. In that state `LOAD TAPE`
+can install or change a tape, dragging the visible tape moves it forward or backward
+without sending characters, and double-clicking the tape removes it from the reader.
+
 The paper tape punch is intentionally limited to the clean SIMH `PTP` workflow.
 Click `NEW TAPE`, type the name of a new paper tape file, then run the OS/8 command
 that writes to the punch, for example:
