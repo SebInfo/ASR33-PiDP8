@@ -1523,6 +1523,7 @@ class TeletypeWidget(QWidget):
             painter.setPen(QPen(QColor("#d4c8a6"), 1))
             painter.setFont(QFont("Helvetica", 8))
             painter.drawText(window, Qt.AlignCenter, "NO TAPE")
+        self._draw_reader_clamp(painter, window, loaded)
 
         painter.setPen(QPen(QColor("#514c43"), 1))
         label_font = QFont("Helvetica", 9)
@@ -1558,13 +1559,75 @@ class TeletypeWidget(QWidget):
         self._draw_reader_button(painter, self._reader_stop_rect, "STOP")
         self._draw_reader_button(painter, self._reader_free_rect, "FREE")
 
-        lever_x = reader_rect.right() - 38
-        lever_y = label_top + 12
-        painter.setPen(QPen(QColor("#4b463d"), 4))
-        painter.drawLine(int(lever_x), int(lever_y), int(lever_x - 18), int(lever_y + 22))
-        painter.setBrush(QColor("#3d3932"))
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(int(lever_x - 25), int(lever_y + 18), 14, 14)
+    def _draw_reader_clamp(self, painter: QPainter, window: QRectF, loaded: bool) -> None:
+        """Draw the transparent paper tape hold-down from the ASR-33 reader."""
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        base = QRectF(
+            window.left() + 16,
+            window.bottom() - 70,
+            window.width() - 32,
+            48,
+        )
+        hinge_y = base.bottom() + 3
+        active = bool(self.reader and self.reader.active)
+        animation_tick = getattr(self, "_sound_tick", 0)
+        jitter = 1.5 if active and int(animation_tick / 4) % 2 else 0.0
+
+        painter.setPen(QPen(QColor("#161613"), 1))
+        painter.setBrush(QColor("#25231e"))
+        painter.drawRoundedRect(base.adjusted(0, 20, 0, 4), 3, 3)
+
+        painter.setPen(QPen(QColor("#5a554b"), 2))
+        painter.drawLine(
+            int(base.left() + 8),
+            int(hinge_y),
+            int(base.right() - 8),
+            int(hinge_y),
+        )
+
+        if loaded:
+            cover = base.adjusted(5, 6 + jitter, -5, -7 + jitter)
+            painter.setPen(QPen(QColor(220, 224, 216, 120), 1))
+            painter.setBrush(QColor(205, 218, 215, 86))
+            painter.drawRoundedRect(cover, 5, 5)
+            painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
+            painter.drawLine(
+                int(cover.left() + 8),
+                int(cover.top() + 8),
+                int(cover.right() - 8),
+                int(cover.top() + 2),
+            )
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#d8d1bd"))
+            for x in (cover.left() + 16, cover.right() - 22):
+                painter.drawEllipse(QRectF(x, cover.bottom() - 11, 7, 7))
+            painter.setPen(QPen(QColor("#4e493f"), 1))
+            painter.setBrush(QColor("#776f60"))
+            painter.drawRoundedRect(QRectF(cover.right() - 18, cover.top() + 8, 12, 22), 3, 3)
+        else:
+            cover = QPainterPath()
+            cover.moveTo(base.left() + 4, base.bottom() - 8)
+            cover.lineTo(base.right() - 4, base.bottom() - 32)
+            cover.lineTo(base.right() - 15, base.bottom() - 47)
+            cover.lineTo(base.left() - 2, base.bottom() - 18)
+            cover.closeSubpath()
+            painter.setPen(QPen(QColor(220, 224, 216, 125), 1))
+            painter.setBrush(QColor(205, 218, 215, 70))
+            painter.drawPath(cover)
+            painter.setPen(QPen(QColor(255, 255, 255, 80), 1))
+            painter.drawLine(
+                int(base.left() + 12),
+                int(base.bottom() - 17),
+                int(base.right() - 20),
+                int(base.bottom() - 41),
+            )
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#776f60"))
+            painter.drawEllipse(QRectF(base.right() - 26, base.bottom() - 41, 11, 11))
+
+        painter.restore()
 
     def _draw_reader_button(self, painter: QPainter, rect: QRectF, label: str) -> None:
         state = self.reader.state if self.reader is not None else "FREE"
