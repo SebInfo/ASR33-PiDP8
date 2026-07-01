@@ -1457,6 +1457,7 @@ class TU56DetailPanel(QWidget):
     def _draw_controls(self, painter: QPainter, rect: QRectF, unit: dict) -> None:
         unit_number = int(unit["unit"])
         attached = bool(unit.get("attached"))
+        selected_transport = bool(unit.get("selected_transport"))
         active = bool(unit.get("active")) and self.frontend.tu56_blink_on()
         write = active and self.frontend.tu56_blink_on()
 
@@ -1468,7 +1469,7 @@ class TU56DetailPanel(QWidget):
         lamps = [
             ("WR", write, QColor("#f0efe2")),
             ("RDY", attached, QColor("#37c45b")),
-            ("SEL", attached and unit_number == self.dialog.selected_unit, QColor("#f1c24a")),
+            ("SEL", selected_transport or unit_number == self.dialog.selected_unit, QColor("#f1c24a")),
             ("ACT", active, QColor("#cc2727")),
         ]
         lamp_x = rect.left() + 168
@@ -1487,10 +1488,12 @@ class TU56DetailPanel(QWidget):
 
     def _draw_transport(self, painter: QPainter, rect: QRectF, unit: dict, selected: bool) -> None:
         attached = bool(unit.get("attached"))
+        selected_transport = bool(unit.get("selected_transport"))
         active = bool(unit.get("active")) and self.frontend.tu56_blink_on()
         filename = os.path.basename(unit.get("file") or "")
 
-        painter.setPen(QPen(QColor("#eadfca") if selected else QColor("#4b463c"), 3 if selected else 1))
+        border = QColor("#37c45b") if selected_transport else QColor("#eadfca") if selected else QColor("#4b463c")
+        painter.setPen(QPen(border, 3 if selected_transport or selected else 1))
         painter.setBrush(QColor("#111211"))
         painter.drawRoundedRect(rect, 8, 8)
 
@@ -1502,7 +1505,7 @@ class TU56DetailPanel(QWidget):
         painter.drawRect(glass.adjusted(7, glass.height() * 0.44, -7, -8))
 
         if attached:
-            self._draw_reel_pair(painter, glass, filename or "DECtape", active)
+            self._draw_reel_pair(painter, glass, filename or "DECtape", active, selected_transport)
         else:
             self._draw_empty_reel_pair(painter, glass)
 
@@ -1512,7 +1515,7 @@ class TU56DetailPanel(QWidget):
         text = filename if attached else "NO REEL MOUNTED"
         painter.drawText(label, Qt.AlignCenter, text)
 
-    def _draw_reel_pair(self, painter: QPainter, rect: QRectF, filename: str, active: bool) -> None:
+    def _draw_reel_pair(self, painter: QPainter, rect: QRectF, filename: str, active: bool, selected_transport: bool) -> None:
         radius = min(rect.width() * 0.18, rect.height() * 0.34)
         cy = rect.center().y() + 5
         left_cx = rect.left() + rect.width() * 0.27
@@ -1523,9 +1526,15 @@ class TU56DetailPanel(QWidget):
         painter.setPen(QPen(QColor("#292724"), 8))
         painter.drawLine(int(left.center().x()), int(left.center().y()), int(right.center().x()), int(right.center().y()))
         painter.setPen(QPen(QColor("#b5aa91"), 2))
-        painter.setBrush(QColor("#d7ccb1"))
+        painter.setBrush(QColor("#e1d5b9") if selected_transport else QColor("#d7ccb1"))
         painter.drawEllipse(left)
         painter.drawEllipse(right)
+
+        if selected_transport:
+            painter.setPen(QPen(QColor(49, 193, 91, 145), 4))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(left.adjusted(-4, -4, 4, 4))
+            painter.drawEllipse(right.adjusted(-4, -4, 4, 4))
 
         phase = (self.frontend._blink_ticks % 24) * 15 if active else 0
         for reel in (left, right):
@@ -3365,8 +3374,14 @@ class ASR33QtFrontend(QMainWindow):
 
     def tu56_units(self) -> list[dict]:
         units = [dict(unit) for unit in self._tu56_units]
+        active_unit_attached = (
+            0 <= self._tu56_active_unit < len(self._tu56_units)
+            and self._tu56_units[self._tu56_active_unit].get("attached")
+        )
         for unit in units:
-            unit["active"] = unit["unit"] == self._tu56_active_unit and self._tu56_activity_ticks > 0
+            is_selected_transport = active_unit_attached and unit["unit"] == self._tu56_active_unit
+            unit["selected_transport"] = is_selected_transport
+            unit["active"] = is_selected_transport and self._tu56_activity_ticks > 0
         return units
 
     def tu56_unit(self, unit_number: int) -> dict:
@@ -3451,6 +3466,8 @@ class ASR33QtFrontend(QMainWindow):
                 unit["attached"] = True
                 unit["file"] = state.get("file") or unit.get("file") or "system DECtape"
                 unit["status"] = state.get("status", "refreshed")
+                if not self._tu56_units[self._tu56_active_unit].get("attached"):
+                    self._tu56_active_unit = unit_number
                 if state.get("active"):
                     self._tu56_active_unit = unit_number
                     self._tu56_activity_ticks = 60
