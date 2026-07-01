@@ -978,22 +978,32 @@ class RK05DetailPanel(QWidget):
         painter.setPen(QPen(QColor("#f2f2ec"), 1))
         painter.drawText(unit_box, Qt.AlignCenter, str(self.unit_number))
 
-        painter.setFont(QFont("Helvetica", 10))
-        painter.setPen(QPen(QColor("#d7d2c7"), 1))
-        name = os.path.basename(unit.get("file") or "")
-        if name:
-            painter.drawText(QRectF(lower.left() + 230, lower.top() + 62, 250, 26), Qt.AlignCenter, name)
-
     def _draw_pack_window(self, painter: QPainter, rect: QRectF, filename: str) -> None:
         tape = QRectF(rect.left() + 90, rect.bottom() - 100, rect.width() - 180, 60)
         painter.setPen(QPen(QColor("#c7c0aa"), 1))
         painter.setBrush(QColor("#d8cfb8"))
         painter.drawRoundedRect(tape, 4, 4)
-        painter.setFont(QFont("Menlo", 18))
-        painter.setPen(QPen(QColor("#9d3e48"), 2))
-        painter.drawText(tape.adjusted(12, 0, -12, 0), Qt.AlignCenter, filename or "DECpack")
+        self._draw_handwritten_pack_label(painter, tape, filename or "DECpack", 20)
         painter.setPen(QPen(QColor(230, 235, 232, 90), 3))
         painter.drawLine(int(rect.left() + 20), int(rect.bottom() - 120), int(rect.right() - 20), int(rect.bottom() - 122))
+
+    def _draw_handwritten_pack_label(self, painter: QPainter, rect: QRectF, text: str, size: int) -> None:
+        label = text
+        if len(label) > 22:
+            stem, ext = os.path.splitext(label)
+            label = stem[:16] + ".." + ext
+        font = QFont("Marker Felt", size)
+        font.setItalic(True)
+        painter.save()
+        painter.translate(rect.center())
+        painter.rotate(-2.5)
+        painter.translate(-rect.center())
+        painter.setFont(font)
+        painter.setPen(QPen(QColor("#a7434d"), 2))
+        painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignCenter, label)
+        painter.setPen(QPen(QColor(130, 60, 65, 120), 1))
+        painter.drawText(rect.adjusted(14, 2, -10, -2), Qt.AlignCenter, label)
+        painter.restore()
 
     def _draw_decpack_label(self, painter: QPainter, rect: QRectF) -> None:
         painter.setPen(QPen(QColor("#e8e8df"), 2))
@@ -1020,15 +1030,8 @@ class RK05DetailPanel(QWidget):
         switch_top = rect.top() + 18
         run_rect = QRectF(rect.left() + 2, switch_top, switch_w, switch_h)
         prot_rect = QRectF(run_rect.right() + 8, switch_top, switch_w, switch_h)
-        self._draw_rk05_paddle_switch(painter, run_rect, "RUN", run)
+        self._draw_rk05_paddle_switch(painter, run_rect, "RUN", run, bottom_label="LOAD")
         self._draw_rk05_paddle_switch(painter, prot_rect, "WT PROT", readonly)
-        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
-        painter.setPen(QPen(QColor("#f0f0e8"), 1))
-        painter.drawText(
-            QRectF(run_rect.left() - 4, run_rect.bottom() + 3, prot_rect.right() - run_rect.left() + 8, 13),
-            Qt.AlignCenter,
-            "LOAD",
-        )
 
         lamp_left = prot_rect.right() + 48
         lamp_top = rect.top() + 20
@@ -1046,7 +1049,9 @@ class RK05DetailPanel(QWidget):
                 lit,
             )
 
-    def _draw_rk05_paddle_switch(self, painter: QPainter, rect: QRectF, label: str, on: bool) -> None:
+    def _draw_rk05_paddle_switch(
+            self, painter: QPainter, rect: QRectF, label: str, on: bool,
+            bottom_label: str | None = None) -> None:
         painter.setFont(QFont("Helvetica", 8, QFont.Bold))
         painter.setPen(QPen(QColor("#f0f0e8"), 1))
         painter.drawText(QRectF(rect.left() - 8, rect.top() - 18, rect.width() + 16, 13), Qt.AlignCenter, label)
@@ -1056,22 +1061,55 @@ class RK05DetailPanel(QWidget):
         painter.setBrush(QColor("#060706"))
         painter.drawRoundedRect(well, 3, 3)
 
-        body = rect.adjusted(1, 3 if on else 12, -1, -8 if on else -2)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#111611"))
+        if on:
+            painter.drawRect(QRectF(well.left() + 3, well.bottom() - 23, well.width() - 6, 20))
+        else:
+            painter.drawRect(QRectF(well.left() + 3, well.top() + 3, well.width() - 6, 20))
+
+        body = rect.adjusted(1, 1 if on else 19, -1, -18 if on else -1)
         path = QPainterPath()
         path.moveTo(body.left() + 4, body.bottom() - 4)
-        path.lineTo(body.left() + 8, body.top() + 6)
-        path.lineTo(body.left() + body.width() * 0.42, body.top())
-        path.lineTo(body.right() - 4, body.top() + 7)
-        path.lineTo(body.right() - 8, body.bottom() - 6)
+        path.lineTo(body.left() + 9, body.top() + 8)
+        path.lineTo(body.left() + body.width() * 0.43, body.top())
+        path.lineTo(body.right() - 3, body.top() + 9)
+        path.lineTo(body.right() - 9, body.bottom() - 6)
         path.lineTo(body.left() + body.width() * 0.52, body.bottom())
         path.closeSubpath()
         painter.setPen(QPen(QColor("#1b211d"), 1))
-        painter.setBrush(QColor("#556056") if on else QColor("#3b453d"))
+        painter.setBrush(QColor("#607064") if on else QColor("#334038"))
         painter.drawPath(path)
-        painter.setPen(QPen(QColor("#7b8779"), 2))
+
+        top_face = QPainterPath()
+        top_face.moveTo(body.left() + 9, body.top() + 8)
+        top_face.lineTo(body.left() + body.width() * 0.43, body.top())
+        top_face.lineTo(body.right() - 3, body.top() + 9)
+        top_face.lineTo(body.right() - 12, body.top() + 21)
+        top_face.lineTo(body.left() + 12, body.top() + 20)
+        top_face.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(148, 162, 147, 145 if on else 85))
+        painter.drawPath(top_face)
+
+        painter.setPen(QPen(QColor("#9aa894") if on else QColor("#657467"), 2))
         painter.drawLine(int(body.left() + 10), int(body.top() + 10), int(body.right() - 8), int(body.top() + 5))
         painter.setPen(QPen(QColor("#222821"), 2))
         painter.drawLine(int(body.left() + 6), int(body.bottom() - 8), int(body.right() - 10), int(body.bottom() - 3))
+
+        marker_y = well.top() + 6 if on else well.bottom() - 11
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#d5ddcf") if on else QColor("#343b34"))
+        painter.drawEllipse(QRectF(well.right() - 8, marker_y, 4, 4))
+
+        if bottom_label:
+            painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+            painter.setPen(QPen(QColor("#f0f0e8"), 1))
+            painter.drawText(
+                QRectF(rect.left() - 8, rect.bottom() + 3, rect.width() + 16, 13),
+                Qt.AlignCenter,
+                bottom_label,
+            )
 
     def _draw_square_lamp(self, painter: QPainter, rect: QRectF, label: str, color: QColor, lit: bool) -> None:
         painter.setFont(QFont("Helvetica", 8, QFont.Bold))
@@ -1386,10 +1424,11 @@ class RK05PanelWidget(QWidget):
         painter.drawPie(pack.adjusted(10, 8, -10, -8), 205 * 16, 100 * 16)
         painter.setBrush(QColor("#191a18"))
         painter.drawEllipse(QRectF(pack.center().x() - 14, pack.center().y() - 14, 28, 28))
-        painter.setFont(QFont("Helvetica", 8))
-        painter.setPen(QPen(QColor("#25231f"), 1))
-        painter.drawText(QRectF(pack.left() + 14, pack.top() + 10, pack.width() - 28, 18),
-                         Qt.AlignCenter, filename or "mounted")
+        label = QRectF(pack.left() + 16, pack.top() + 12, pack.width() - 32, 24)
+        painter.setPen(QPen(QColor("#c5b894"), 1))
+        painter.setBrush(QColor("#dacda7"))
+        painter.drawRoundedRect(label, 3, 3)
+        self._draw_handwritten_pack_label(painter, label, filename or "mounted", 10)
 
     def _draw_button(self, painter: QPainter, rect: QRectF, label: str, active: bool) -> None:
         painter.setPen(QPen(QColor("#5b5448"), 1))
