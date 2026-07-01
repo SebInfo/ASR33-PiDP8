@@ -2799,8 +2799,13 @@ class ASR33QtFrontend(QMainWindow):
             if self._detect_tu56_boot_text(self._boot_detection_buffer):
                 self._boot_detection_buffer = ""
                 self.tu56_boot_signal.emit()
-            self._rk05_activity_ticks = 35
+            if any(unit["attached"] for unit in self._rk05_units):
+                if not self._rk05_units[self._rk05_active_unit].get("attached"):
+                    self._rk05_active_unit = self._first_attached_unit(self._rk05_units, self._rk05_active_unit)
+                self._rk05_activity_ticks = 35
             if any(unit["attached"] for unit in self._tu56_units):
+                if not self._tu56_units[self._tu56_active_unit].get("attached"):
+                    self._tu56_active_unit = self._first_attached_unit(self._tu56_units, self._tu56_active_unit)
                 self._tu56_activity_ticks = 35
         self.display_signal.emit()
 
@@ -2821,8 +2826,9 @@ class ASR33QtFrontend(QMainWindow):
         self.paper.setFocus(Qt.ActiveWindowFocusReason)
         self.timer.start()
         QTimer.singleShot(2500, self.refresh_rk05_state)
-        QTimer.singleShot(3200, self.refresh_dt_state_from_simh)
-        QTimer.singleShot(6500, self.refresh_rk05_state)
+        QTimer.singleShot(4600, self.refresh_dt_state_from_simh)
+        QTimer.singleShot(7000, self.refresh_rk05_state)
+        QTimer.singleShot(9000, self.refresh_dt_state_from_simh)
         self.app.exec()
 
         self.timer.stop()
@@ -2890,6 +2896,13 @@ class ASR33QtFrontend(QMainWindow):
     def tu56_blink_on(self) -> bool:
         return (self._blink_ticks // 8) % 2 == 0
 
+    @staticmethod
+    def _first_attached_unit(units: list[dict], fallback: int = 0) -> int:
+        for unit in units:
+            if unit.get("attached"):
+                return int(unit.get("unit", fallback))
+        return fallback
+
     def rk05_units(self) -> list[dict]:
         units = [dict(unit) for unit in self._rk05_units]
         for unit in units:
@@ -2913,6 +2926,8 @@ class ASR33QtFrontend(QMainWindow):
         dialog.activateWindow()
 
     def refresh_rk05_state(self) -> None:
+        if self._rk05_show_capture or self._tu56_show_capture:
+            return
         self.rk_controller.show()
 
     def select_rk05_pack(self, unit_number: int) -> None:
@@ -3049,6 +3064,8 @@ class ASR33QtFrontend(QMainWindow):
         return units
 
     def refresh_dt_state_from_simh(self) -> None:
+        if self._rk05_show_capture or self._tu56_show_capture:
+            return
         self.dt_controller.show()
 
     def _detect_tu56_boot_text(self, text: str) -> bool:
@@ -3086,7 +3103,10 @@ class ASR33QtFrontend(QMainWindow):
         parsed = SimhDTController.parse_show_dt(self._tu56_show_buffer)
         if not parsed:
             return
-        for unit_number, state in parsed.items():
+        for unit_number in range(8):
+            if unit_number not in parsed:
+                continue
+            state = parsed[unit_number]
             unit = self._tu56_units[unit_number]
             if state.get("attached"):
                 unit["attached"] = True
@@ -3101,6 +3121,9 @@ class ASR33QtFrontend(QMainWindow):
                 unit["status"] = "not attached"
                 if self._tu56_active_unit == unit_number:
                     self._tu56_activity_ticks = 0
+        if any(unit["attached"] for unit in self._tu56_units):
+            if not self._tu56_units[self._tu56_active_unit].get("attached"):
+                self._tu56_active_unit = self._first_attached_unit(self._tu56_units, self._tu56_active_unit)
         self._refresh_tu56_panels()
 
     def select_tu56_tape(self, unit_number: int) -> None:
