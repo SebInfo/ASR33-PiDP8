@@ -904,6 +904,25 @@ class RK05DetailDialog(QDialog):
         self.panel.update()
 
 
+def draw_handwritten_pack_label(painter: QPainter, rect: QRectF, text: str, size: int) -> None:
+    label = text
+    if len(label) > 22:
+        stem, ext = os.path.splitext(label)
+        label = stem[:16] + ".." + ext
+    font = QFont("Marker Felt", size)
+    font.setItalic(True)
+    painter.save()
+    painter.translate(rect.center())
+    painter.rotate(-2.5)
+    painter.translate(-rect.center())
+    painter.setFont(font)
+    painter.setPen(QPen(QColor("#a7434d"), 2))
+    painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignCenter, label)
+    painter.setPen(QPen(QColor(130, 60, 65, 120), 1))
+    painter.drawText(rect.adjusted(14, 2, -10, -2), Qt.AlignCenter, label)
+    painter.restore()
+
+
 class RK05DetailPanel(QWidget):
     """Large painted RK05 faceplate inspired by the DECpack front panel."""
 
@@ -983,27 +1002,9 @@ class RK05DetailPanel(QWidget):
         painter.setPen(QPen(QColor("#c7c0aa"), 1))
         painter.setBrush(QColor("#d8cfb8"))
         painter.drawRoundedRect(tape, 4, 4)
-        self._draw_handwritten_pack_label(painter, tape, filename or "DECpack", 20)
+        draw_handwritten_pack_label(painter, tape, filename or "DECpack", 20)
         painter.setPen(QPen(QColor(230, 235, 232, 90), 3))
         painter.drawLine(int(rect.left() + 20), int(rect.bottom() - 120), int(rect.right() - 20), int(rect.bottom() - 122))
-
-    def _draw_handwritten_pack_label(self, painter: QPainter, rect: QRectF, text: str, size: int) -> None:
-        label = text
-        if len(label) > 22:
-            stem, ext = os.path.splitext(label)
-            label = stem[:16] + ".." + ext
-        font = QFont("Marker Felt", size)
-        font.setItalic(True)
-        painter.save()
-        painter.translate(rect.center())
-        painter.rotate(-2.5)
-        painter.translate(-rect.center())
-        painter.setFont(font)
-        painter.setPen(QPen(QColor("#a7434d"), 2))
-        painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignCenter, label)
-        painter.setPen(QPen(QColor(130, 60, 65, 120), 1))
-        painter.drawText(rect.adjusted(14, 2, -10, -2), Qt.AlignCenter, label)
-        painter.restore()
 
     def _draw_decpack_label(self, painter: QPainter, rect: QRectF) -> None:
         painter.setPen(QPen(QColor("#e8e8df"), 2))
@@ -1428,7 +1429,7 @@ class RK05PanelWidget(QWidget):
         painter.setPen(QPen(QColor("#c5b894"), 1))
         painter.setBrush(QColor("#dacda7"))
         painter.drawRoundedRect(label, 3, 3)
-        self._draw_handwritten_pack_label(painter, label, filename or "mounted", 10)
+        draw_handwritten_pack_label(painter, label, filename or "mounted", 10)
 
     def _draw_button(self, painter: QPainter, rect: QRectF, label: str, active: bool) -> None:
         painter.setPen(QPen(QColor("#5b5448"), 1))
