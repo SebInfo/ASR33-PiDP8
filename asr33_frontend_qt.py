@@ -2680,7 +2680,7 @@ class ASR33QtFrontend(QMainWindow):
         self.display_update_needed = True
         self.tape_running_state = False
         self._rk05_units = [
-            {"unit": 0, "name": "RK0", "file": "os8/v3d.rk05", "attached": True, "readonly": False, "run": True, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
+            {"unit": 0, "name": "RK0", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": "not scanned"},
             {"unit": 1, "name": "RK1", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
             {"unit": 2, "name": "RK2", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
             {"unit": 3, "name": "RK3", "file": "", "attached": False, "readonly": False, "run": False, "fault": False, "load": False, "rd": False, "wt": False, "active": False, "status": ""},
@@ -2822,6 +2822,7 @@ class ASR33QtFrontend(QMainWindow):
         self.timer.start()
         QTimer.singleShot(2500, self.refresh_rk05_state)
         QTimer.singleShot(3200, self.refresh_dt_state_from_simh)
+        QTimer.singleShot(6500, self.refresh_rk05_state)
         self.app.exec()
 
         self.timer.stop()
@@ -3027,16 +3028,16 @@ class ASR33QtFrontend(QMainWindow):
         parsed = SimhRKController.parse_show_rk(self._rk05_show_buffer)
         if not parsed:
             return
-        for unit_number, state in parsed.items():
+        for unit_number in range(4):
+            if unit_number not in parsed:
+                continue
+            state = parsed[unit_number]
             unit = self._rk05_units[unit_number]
             unit["attached"] = state.get("attached", False)
-            unit["file"] = state.get("file") or (unit.get("file") if unit["attached"] else "")
+            unit["file"] = state.get("file") if unit["attached"] else ""
             unit["readonly"] = state.get("readonly", False)
             unit["fault"] = state.get("fault", False)
-            if unit["attached"] and not unit.get("run"):
-                unit["run"] = True
-            if not unit["attached"]:
-                unit["run"] = False
+            unit["run"] = bool(unit["attached"])
             unit["load"] = False
             unit["status"] = "refreshed"
         self._refresh_rk05_panel()
