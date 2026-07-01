@@ -179,6 +179,10 @@ currently `/media/PAPER-TAPE`, as visual paper rolls and loads them over SFTP.
 The reader chooser can also delete obsolete remote tape files, which is useful
 for removing temporary test tapes from the USB key.
 
+The reader lever is modeled as a mechanical control: `FREE` releases the tape so it
+can be inserted or adjusted, `STOP` holds it without reading, and `START` feeds it to
+the PDP-8. `FREE` does not send data to SIMH.
+
 The paper tape punch is intentionally limited to the clean SIMH `PTP` workflow.
 Click `NEW TAPE`, type the name of a new paper tape file, then run the OS/8 command
 that writes to the punch, for example:

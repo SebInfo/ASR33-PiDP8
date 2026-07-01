@@ -1523,7 +1523,8 @@ class TeletypeWidget(QWidget):
             painter.setPen(QPen(QColor("#d4c8a6"), 1))
             painter.setFont(QFont("Helvetica", 8))
             painter.drawText(window, Qt.AlignCenter, "NO TAPE")
-        self._draw_reader_clamp(painter, window, loaded)
+        reader_state = self.reader.state if self.reader is not None else "FREE"
+        self._draw_reader_clamp(painter, window, loaded, reader_state)
 
         painter.setPen(QPen(QColor("#514c43"), 1))
         label_font = QFont("Helvetica", 9)
@@ -1559,7 +1560,13 @@ class TeletypeWidget(QWidget):
         self._draw_reader_button(painter, self._reader_stop_rect, "STOP")
         self._draw_reader_button(painter, self._reader_free_rect, "FREE")
 
-    def _draw_reader_clamp(self, painter: QPainter, window: QRectF, loaded: bool) -> None:
+    def _draw_reader_clamp(
+        self,
+        painter: QPainter,
+        window: QRectF,
+        loaded: bool,
+        reader_state: str,
+    ) -> None:
         """Draw the transparent paper tape hold-down from the ASR-33 reader."""
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
@@ -1587,7 +1594,8 @@ class TeletypeWidget(QWidget):
             int(hinge_y),
         )
 
-        if loaded:
+        clamped = loaded and reader_state != "FREE"
+        if clamped:
             cover = base.adjusted(5, 6 + jitter, -5, -7 + jitter)
             painter.setPen(QPen(QColor(220, 224, 216, 120), 1))
             painter.setBrush(QColor(205, 218, 215, 86))
@@ -1607,11 +1615,12 @@ class TeletypeWidget(QWidget):
             painter.setBrush(QColor("#776f60"))
             painter.drawRoundedRect(QRectF(cover.right() - 18, cover.top() + 8, 12, 22), 3, 3)
         else:
+            lift = 8 if loaded else 0
             cover = QPainterPath()
-            cover.moveTo(base.left() + 4, base.bottom() - 8)
-            cover.lineTo(base.right() - 4, base.bottom() - 32)
-            cover.lineTo(base.right() - 15, base.bottom() - 47)
-            cover.lineTo(base.left() - 2, base.bottom() - 18)
+            cover.moveTo(base.left() + 4, base.bottom() - 8 - lift)
+            cover.lineTo(base.right() - 4, base.bottom() - 32 - lift)
+            cover.lineTo(base.right() - 15, base.bottom() - 47 - lift)
+            cover.lineTo(base.left() - 2, base.bottom() - 18 - lift)
             cover.closeSubpath()
             painter.setPen(QPen(QColor(220, 224, 216, 125), 1))
             painter.setBrush(QColor(205, 218, 215, 70))
@@ -1619,13 +1628,21 @@ class TeletypeWidget(QWidget):
             painter.setPen(QPen(QColor(255, 255, 255, 80), 1))
             painter.drawLine(
                 int(base.left() + 12),
-                int(base.bottom() - 17),
+                int(base.bottom() - 17 - lift),
                 int(base.right() - 20),
-                int(base.bottom() - 41),
+                int(base.bottom() - 41 - lift),
             )
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor("#776f60"))
-            painter.drawEllipse(QRectF(base.right() - 26, base.bottom() - 41, 11, 11))
+            painter.drawEllipse(QRectF(base.right() - 26, base.bottom() - 41 - lift, 11, 11))
+            if loaded:
+                painter.setPen(QPen(QColor("#d6ccb3"), 1))
+                painter.setFont(QFont("Helvetica", 7))
+                painter.drawText(
+                    QRectF(base.left() + 6, base.top() + 1, base.width() - 12, 14),
+                    Qt.AlignCenter,
+                    "TAPE FREE",
+                )
 
         painter.restore()
 
