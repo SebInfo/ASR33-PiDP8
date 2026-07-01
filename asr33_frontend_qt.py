@@ -834,17 +834,20 @@ class SimhRKController:
             unit_number = int(parts[0][2:])
             if unit_number not in (0, 1, 2, 3):
                 continue
-            attached = "ATTACHED TO" in upper
             not_attached = "NOT ATTACHED" in upper
+            attached = "ATTACHED" in upper and not not_attached
             readonly = "READ ONLY" in upper or "WRITE LOCK" in upper or "WRITE PROTECT" in upper
             write_enabled = "WRITE ENABLED" in upper
             filename = ""
             if attached:
-                marker = "attached to "
                 lower = line.lower()
-                start = lower.find(marker)
-                if start >= 0:
-                    filename = line[start + len(marker):].split(",", 1)[0].strip()
+                for marker in ("attached to ", "attached "):
+                    start = lower.find(marker)
+                    if start >= 0:
+                        candidate = line[start + len(marker):].split(",", 1)[0].strip()
+                        if candidate and candidate.lower() not in ("write enabled", "read only", "write locked"):
+                            filename = candidate
+                        break
             parsed[unit_number] = {
                 "attached": attached and not not_attached,
                 "file": filename,
@@ -3395,7 +3398,7 @@ class ASR33QtFrontend(QMainWindow):
             state = parsed[unit_number]
             unit = self._rk05_units[unit_number]
             unit["attached"] = state.get("attached", False)
-            unit["file"] = state.get("file") if unit["attached"] else ""
+            unit["file"] = (state.get("file") or "system disk") if unit["attached"] else ""
             unit["readonly"] = state.get("readonly", False)
             unit["fault"] = state.get("fault", False)
             unit["run"] = bool(unit["attached"])
