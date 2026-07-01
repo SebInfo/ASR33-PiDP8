@@ -1878,21 +1878,36 @@ class TeletypeWidget(QWidget):
 
     def _draw_platen_scroll(self, painter: QPainter, paper_rect: QRectF, cap_rect: QRectF) -> None:
         """Draw a typewriter-like paper advance wheel and return-to-end control."""
-        wheel_size = 42
-        wheel_x = paper_rect.right() + 14
-        wheel_y = cap_rect.top() + 42
+        wheel_size = 70
+        wheel_x = max(10, paper_rect.left() - wheel_size - 28)
+        wheel_y = cap_rect.top() + 34
         self._scroll_wheel_rect = QRectF(wheel_x, wheel_y, wheel_size, wheel_size)
-        self._scroll_end_rect = QRectF(wheel_x - 8, wheel_y + wheel_size + 14, wheel_size + 16, 26)
+        self._scroll_end_rect = QRectF(wheel_x + 8, wheel_y + wheel_size + 10, wheel_size - 16, 22)
 
         painter.save()
-        painter.setPen(QPen(QColor("#403a32"), 2))
-        painter.setBrush(QColor("#756b5d"))
+        bracket = QRectF(
+            self._scroll_wheel_rect.center().x() - 10,
+            self._scroll_wheel_rect.center().y() - 5,
+            paper_rect.left() - self._scroll_wheel_rect.center().x() + 12,
+            10,
+        )
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#a79f90"))
+        painter.drawRoundedRect(bracket, 4, 4)
+
+        painter.setPen(QPen(QColor("#6e675c"), 2))
+        painter.setBrush(QColor("#d8d0bd"))
         painter.drawEllipse(self._scroll_wheel_rect)
 
-        notch_count = 12
+        inner = self._scroll_wheel_rect.adjusted(8, 8, -8, -8)
+        painter.setPen(QPen(QColor("#b8af9c"), 1))
+        painter.setBrush(QColor("#eee5d1"))
+        painter.drawEllipse(inner)
+
+        notch_count = 28
         center = self._scroll_wheel_rect.center()
-        radius_outer = wheel_size * 0.42
-        radius_inner = wheel_size * 0.30
+        radius_outer = wheel_size * 0.48
+        radius_inner = wheel_size * 0.37
         phase = self._scroll_offset_lines % notch_count
         for i in range(notch_count):
             angle = ((i + phase * 0.18) / notch_count) * 6.283185307
@@ -1900,18 +1915,22 @@ class TeletypeWidget(QWidget):
             y1 = center.y() + math.sin(angle) * radius_inner
             x2 = center.x() + math.cos(angle) * radius_outer
             y2 = center.y() + math.sin(angle) * radius_outer
+            painter.setPen(QPen(QColor("#81796d"), 2 if i % 2 == 0 else 1))
             painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
-        painter.setBrush(QColor("#312d27"))
-        painter.setPen(Qt.NoPen)
+        painter.setPen(QPen(QColor("#6e675c"), 2))
+        painter.setBrush(QColor("#c8bfac"))
+        painter.drawEllipse(QRectF(center.x() - 13, center.y() - 13, 26, 26))
+        painter.setBrush(QColor("#81786b"))
+        painter.setPen(QPen(QColor("#5c554b"), 1))
         painter.drawEllipse(QRectF(center.x() - 5, center.y() - 5, 10, 10))
 
         active = self._scroll_offset_lines > 0
         painter.setPen(QPen(QColor("#6b6255"), 1))
-        painter.setBrush(QColor("#e1d8c5") if active else QColor("#a79f90"))
+        painter.setBrush(QColor("#e1d8c5") if active else QColor("#b4ac9d"))
         painter.drawRoundedRect(self._scroll_end_rect, 5, 5)
         painter.setPen(QPen(QColor("#2f2b25"), 1))
-        font = QFont("Helvetica", 8)
+        font = QFont("Helvetica", 7)
         font.setBold(active)
         painter.setFont(font)
         painter.drawText(self._scroll_end_rect, Qt.AlignCenter, "FIN")
