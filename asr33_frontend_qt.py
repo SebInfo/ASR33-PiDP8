@@ -1334,11 +1334,26 @@ class TeletypeWidget(QWidget):
         painter.setBrush(QColor("#bdb6a7"))
         painter.drawRoundedRect(reader_rect, 12, 12)
 
+        button_w = (reader_rect.width() - 48) / 3
+        y = reader_rect.bottom() - 48
+        label_top = y - 126
+        window_bottom = label_top - 14
+
         painter.setBrush(QColor("#948c7d"))
-        throat = QRectF(reader_rect.left() + 22, reader_rect.top() + 24, reader_rect.width() - 44, 310)
+        throat = QRectF(
+            reader_rect.left() + 22,
+            reader_rect.top() + 24,
+            reader_rect.width() - 44,
+            max(310, window_bottom - reader_rect.top() - 14),
+        )
         painter.drawRoundedRect(throat, 6, 6)
 
-        window = QRectF(reader_rect.left() + 22, reader_rect.top() + 34, reader_rect.width() - 44, 290)
+        window = QRectF(
+            reader_rect.left() + 22,
+            reader_rect.top() + 34,
+            reader_rect.width() - 44,
+            max(290, window_bottom - reader_rect.top() - 34),
+        )
         painter.setBrush(QColor(50, 58, 60, 135))
         painter.drawRoundedRect(window, 4, 4)
         loaded = bool(self.reader and self.reader.tape_loaded)
@@ -1354,7 +1369,7 @@ class TeletypeWidget(QWidget):
         label_font.setBold(True)
         painter.setFont(label_font)
         painter.drawText(
-            reader_rect.adjusted(18, 350, -18, 0),
+            QRectF(reader_rect.left() + 18, label_top, reader_rect.width() - 36, 36),
             Qt.AlignLeft | Qt.AlignTop,
             "PAPER TAPE\nREADER",
         )
@@ -1367,13 +1382,11 @@ class TeletypeWidget(QWidget):
                 name = name[:17] + "..."
             pct = int(self.reader.progress() * 100)
             painter.drawText(
-                reader_rect.adjusted(18, 390, -44, 0),
+                QRectF(reader_rect.left() + 18, label_top + 42, reader_rect.width() - 62, 42),
                 Qt.AlignLeft | Qt.AlignTop,
                 f"{name}\n{pct}% READ",
             )
 
-        button_w = (reader_rect.width() - 48) / 3
-        y = reader_rect.bottom() - 48
         self._reader_load_rect = QRectF(reader_rect.left() + 18, y - 34, reader_rect.width() - 36, 24)
         self._reader_codes_rect = QRectF(reader_rect.left() + 18, y - 64, reader_rect.width() - 36, 24)
         self._reader_start_rect = QRectF(reader_rect.left() + 18, y, button_w, 26)
@@ -1386,7 +1399,7 @@ class TeletypeWidget(QWidget):
         self._draw_reader_button(painter, self._reader_free_rect, "FREE")
 
         lever_x = reader_rect.right() - 38
-        lever_y = reader_rect.top() + 360
+        lever_y = label_top + 12
         painter.setPen(QPen(QColor("#4b463d"), 4))
         painter.drawLine(int(lever_x), int(lever_y), int(lever_x - 18), int(lever_y + 22))
         painter.setBrush(QColor("#3d3932"))
@@ -1443,7 +1456,7 @@ class TeletypeWidget(QWidget):
         pitch_y = max(13.0, tape.height() / 18.0)
         first_col_x = tape.left() + tape.width() * 0.11
         pitch_x = tape.width() * 0.096
-        bit_radius = max(2.0, pitch_x * 0.34)
+        bit_radius = max(2.4, pitch_x * 0.42)
         sprocket_radius = max(1.7, bit_radius * 0.63)
         row_start = max(0, self.reader.position - 8)
         row_count = int(tape.height() // pitch_y) + 4
@@ -1559,20 +1572,6 @@ class TeletypeWidget(QWidget):
                 Qt.AlignLeft | Qt.AlignTop,
                 f"{name}\n{self.punch.byte_count} BYTES PTP",
             )
-
-        note_rect = QRectF(
-            punch_rect.left() + 24,
-            punch_rect.bottom() - 132,
-            punch_rect.width() - 48,
-            44,
-        )
-        painter.setPen(QPen(QColor("#5f5749"), 1))
-        painter.setFont(QFont("Helvetica", 8))
-        painter.drawText(
-            note_rect,
-            Qt.AlignLeft | Qt.AlignTop,
-            "NEW PAPER TAPE\nthen OS/8 .PUNCH",
-        )
 
         y = punch_rect.bottom() - 82
         self._punch_mode_rect = QRectF()
@@ -1713,12 +1712,20 @@ class TeletypeWidget(QWidget):
         painter.drawLine(int(tape.left() + 4), int(tape.top()), int(tape.left() + 4), int(tape.bottom()))
         painter.drawLine(int(tape.right() - 4), int(tape.top()), int(tape.right() - 4), int(tape.bottom()))
 
+        if self.punch.output_name:
+            label_rect = QRectF(tape.left() + 12, tape.top() + 8, tape.width() - 24, 24)
+            painter.setPen(QPen(QColor("#835d4d"), 1))
+            label_font = QFont("Marker Felt", 12)
+            label_font.setItalic(True)
+            painter.setFont(label_font)
+            painter.drawText(label_rect, Qt.AlignCenter, self.punch.output_name)
+
         col_map = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8}
         sprocket_col = 3
         pitch_y = max(13.0, tape.height() / 18.0)
         first_col_x = tape.left() + tape.width() * 0.11
         pitch_x = tape.width() * 0.096
-        bit_radius = max(2.0, pitch_x * 0.34)
+        bit_radius = max(2.4, pitch_x * 0.42)
         sprocket_radius = max(1.5, bit_radius * 0.63)
         head_y = tape.top() + tape.height() * 0.42
 
@@ -1736,7 +1743,7 @@ class TeletypeWidget(QWidget):
 
         visible = int((tape.bottom() - head_y) // pitch_y) + 3
         recent = self.punch.punched_bytes[-visible:]
-        for i, byte in enumerate(recent):
+        for i, byte in enumerate(reversed(recent)):
             y = head_y + i * pitch_y + scroll_offset
             self._draw_punch_byte_row(
                 painter, first_col_x, y, pitch_x, byte, col_map, sprocket_col,
@@ -1768,8 +1775,8 @@ class TeletypeWidget(QWidget):
         for bit in range(8):
             x = first_x + col_map[bit] * pitch_x
             if punched and ((byte >> bit) & 1):
-                painter.setPen(QPen(QColor("#a6a08b"), 1))
-                painter.setBrush(QColor("#302c26"))
+                painter.setPen(QPen(QColor("#7d735f"), 1))
+                painter.setBrush(QColor("#171411"))
                 painter.drawEllipse(QRectF(x - bit_radius, y - bit_radius,
                                            bit_radius * 2, bit_radius * 2))
             elif ghost_bits:
