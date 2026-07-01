@@ -380,8 +380,8 @@ class QtPaperTapePunch:
             self.punched_bytes.extend([0] * min(count, 96))
         self.visual_phase += count * 0.92
         self.visual_activity_ticks = max(self.visual_activity_ticks, min(80, 18 + count * 2))
-        if len(self.punched_bytes) > 96:
-            self.punched_bytes = self.punched_bytes[-96:]
+        if len(self.punched_bytes) > 4096:
+            self.punched_bytes = self.punched_bytes[-4096:]
 
     def advance_visual_feed(self) -> None:
         if self.visual_activity_ticks <= 0:
@@ -1751,7 +1751,8 @@ class TeletypeWidget(QWidget):
             )
 
         visible = int((tape.bottom() - head_y) // pitch_y) + 3
-        recent = self.punch.punched_bytes[-visible:]
+        display_bytes = self._punch_display_bytes(visible)
+        recent = display_bytes[-visible:]
         for i, byte in enumerate(reversed(recent)):
             y = head_y + i * pitch_y + scroll_offset
             self._draw_punch_byte_row(
@@ -1770,6 +1771,27 @@ class TeletypeWidget(QWidget):
                 4,
             )
         painter.restore()
+
+    def _punch_display_bytes(self, visible_rows: int) -> list[int]:
+        if self.punch is None or not self.punch.punched_bytes:
+            return []
+
+        data = self.punch.punched_bytes
+        first = 0
+        while first < len(data) and data[first] == 0:
+            first += 1
+
+        last = len(data)
+        while last > first and data[last - 1] == 0:
+            last -= 1
+
+        if first >= last:
+            return data[-visible_rows:]
+
+        trimmed = data[first:last]
+        lead = [0] * min(4, first)
+        tail = [0] * min(3, len(data) - last)
+        return lead + trimmed + tail
 
     def _draw_punch_byte_row(
             self, painter: QPainter, first_x: float, y: float, pitch_x: float,
