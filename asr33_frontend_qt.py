@@ -1752,6 +1752,14 @@ class TeletypeWidget(QWidget):
         painter.setClipRect(window)
 
         scroll_offset = (self.punch.visual_phase % 1.0) * pitch_y
+        self._draw_punch_sprocket_track(
+            painter,
+            first_col_x + sprocket_col * pitch_x,
+            tape,
+            pitch_y,
+            sprocket_radius,
+            scroll_offset,
+        )
         if self.punch.output_name:
             label_y = tape.top() + 8 + self.punch.visual_phase * pitch_y
             if tape.top() - 28 <= label_y <= tape.bottom() + 8:
@@ -1767,7 +1775,7 @@ class TeletypeWidget(QWidget):
             y = head_y - (blank_rows - row) * pitch_y + scroll_offset
             self._draw_punch_byte_row(
                 painter, first_col_x, y, pitch_x, 0, col_map, sprocket_col,
-                bit_radius, sprocket_radius, punched=False, ghost_bits=False,
+                bit_radius, sprocket_radius, punched=False, ghost_bits=True, draw_sprocket=False,
             )
 
         visible = int((tape.bottom() - head_y) // pitch_y) + 3
@@ -1777,7 +1785,7 @@ class TeletypeWidget(QWidget):
             y = head_y + i * pitch_y + scroll_offset
             self._draw_punch_byte_row(
                 painter, first_col_x, y, pitch_x, byte, col_map, sprocket_col,
-                bit_radius, sprocket_radius, punched=True, ghost_bits=True,
+                bit_radius, sprocket_radius, punched=True, ghost_bits=True, draw_sprocket=False,
             )
 
         if self.punch.visual_active():
@@ -1792,11 +1800,31 @@ class TeletypeWidget(QWidget):
             )
         painter.restore()
 
+    def _draw_punch_sprocket_track(
+            self, painter: QPainter, sx_x: float, tape: QRectF,
+            pitch_y: float, sprocket_radius: float, scroll_offset: float) -> None:
+        row_count = int(tape.height() // pitch_y) + 4
+        for row in range(row_count):
+            y = tape.top() - pitch_y + row * pitch_y + scroll_offset
+            if y < tape.top() - pitch_y or y > tape.bottom() + pitch_y:
+                continue
+            painter.setPen(QPen(QColor("#9f987f"), 1))
+            painter.setBrush(QColor("#2f2c27"))
+            painter.drawEllipse(QRectF(
+                sx_x - sprocket_radius,
+                y - sprocket_radius,
+                sprocket_radius * 2,
+                sprocket_radius * 2,
+            ))
+
     def _punch_display_bytes(self, visible_rows: int) -> list[int]:
         if self.punch is None or not self.punch.punched_bytes:
             return []
 
         data = self.punch.punched_bytes
+        if self.punch.visual_active():
+            return data[-visible_rows:]
+
         first = 0
         while first < len(data) and data[first] == 0:
             first += 1
@@ -1816,12 +1844,14 @@ class TeletypeWidget(QWidget):
     def _draw_punch_byte_row(
             self, painter: QPainter, first_x: float, y: float, pitch_x: float,
             byte: int, col_map: dict[int, int], sprocket_col: int,
-            bit_radius: float, sprocket_radius: float, punched: bool, ghost_bits: bool) -> None:
+            bit_radius: float, sprocket_radius: float, punched: bool, ghost_bits: bool,
+            draw_sprocket: bool = True) -> None:
         sx_x = first_x + sprocket_col * pitch_x
-        painter.setPen(QPen(QColor("#9f987f"), 1))
-        painter.setBrush(QColor("#2f2c27"))
-        painter.drawEllipse(QRectF(sx_x - sprocket_radius, y - sprocket_radius,
-                                   sprocket_radius * 2, sprocket_radius * 2))
+        if draw_sprocket:
+            painter.setPen(QPen(QColor("#9f987f"), 1))
+            painter.setBrush(QColor("#2f2c27"))
+            painter.drawEllipse(QRectF(sx_x - sprocket_radius, y - sprocket_radius,
+                                       sprocket_radius * 2, sprocket_radius * 2))
 
         for bit in range(8):
             x = first_x + col_map[bit] * pitch_x
