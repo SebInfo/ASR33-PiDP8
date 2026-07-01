@@ -1002,7 +1002,7 @@ class RK05DetailPanel(QWidget):
         ready = attached and run and not fault
 
         painter.fillRect(raw_rect, QColor("#0f100f"))
-        painter.setPen(QPen(QColor("#d7d2c7"), 4))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#d7d2c7"), 5 if ready else 4))
         painter.setBrush(QColor("#191a18"))
         painter.drawRoundedRect(rect, 18, 18)
 
@@ -1015,6 +1015,10 @@ class RK05DetailPanel(QWidget):
 
         if attached:
             self._draw_pack_window(painter, window, os.path.basename(unit.get("file") or "mounted"))
+            if ready:
+                painter.setPen(QPen(QColor(49, 193, 91, 150), 4))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(window.adjusted(8, 8, -8, -8))
         else:
             painter.setFont(QFont("Helvetica", 16))
             painter.setPen(QPen(QColor("#4d493f"), 1))
@@ -1027,8 +1031,8 @@ class RK05DetailPanel(QWidget):
 
         lamps = [
             ("PWR", run, QColor("#38c65c")),
-            ("RDY", ready, QColor("#f3f5e7")),
-            ("ONCYL", ready and not active, QColor("#f3f5e7")),
+            ("RDY", ready, QColor("#38c65c")),
+            ("ONCYL", ready and not active, QColor("#38c65c")),
             ("FAULT", fault, QColor("#b52825")),
             ("WTPROT", readonly, QColor("#f3f5e7")),
             ("LOAD", load_active, QColor("#f3f5e7")),
@@ -1046,8 +1050,11 @@ class RK05DetailPanel(QWidget):
         unit_font = QFont("Helvetica", 34)
         unit_font.setBold(True)
         painter.setFont(unit_font)
-        painter.setPen(QPen(QColor("#f2f2ec"), 1))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#f2f2ec"), 1))
         painter.drawText(unit_box, Qt.AlignCenter, str(self.unit_number))
+        painter.setFont(QFont("Helvetica", 8, QFont.Bold))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#6d6250"), 1))
+        painter.drawText(QRectF(unit_box.left() - 8, unit_box.bottom() + 4, unit_box.width() + 16, 14), Qt.AlignCenter, "ONLINE" if ready else "EMPTY")
 
     def _draw_pack_window(self, painter: QPainter, rect: QRectF, filename: str) -> None:
         tape = QRectF(rect.left() + 90, rect.bottom() - 100, rect.width() - 180, 60)
@@ -1253,10 +1260,11 @@ class TU56PanelWidget(QWidget):
 
     def _draw_drive(self, painter: QPainter, rect: QRectF, unit: dict) -> None:
         attached = bool(unit.get("attached"))
+        selected_transport = bool(unit.get("selected_transport"))
         active = bool(unit.get("active")) and self.frontend.tu56_blink_on()
         unit_number = int(unit["unit"])
 
-        painter.setPen(QPen(QColor("#555044"), 1))
+        painter.setPen(QPen(QColor("#31c15b") if selected_transport or attached else QColor("#555044"), 3 if selected_transport or attached else 1))
         painter.setBrush(QColor("#111211"))
         painter.drawRoundedRect(rect, 5, 5)
 
@@ -1278,14 +1286,25 @@ class TU56PanelWidget(QWidget):
         reels = QRectF(control.right() + 12, rect.top() + 8, 118, rect.height() - 16)
         if attached:
             self._draw_reels(painter, reels, os.path.basename(unit.get("file") or ""))
+            painter.setPen(QPen(QColor(49, 193, 91, 150), 3))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(reels.adjusted(-5, -5, 5, 5), 5, 5)
         else:
             self._draw_empty_transport(painter, reels)
 
         name_font = QFont("Helvetica", 8)
         name_font.setBold(True)
         painter.setFont(name_font)
-        painter.setPen(QPen(QColor("#d4c8a6"), 1))
+        painter.setPen(QPen(QColor("#31c15b") if attached else QColor("#d4c8a6"), 1))
         painter.drawText(QRectF(reels.right() + 8, rect.top() + 8, 36, 15), Qt.AlignLeft, unit["name"])
+
+        painter.setFont(QFont("Helvetica", 6, QFont.Bold))
+        painter.setPen(QPen(QColor("#31c15b") if attached else QColor("#6d6250"), 1))
+        painter.drawText(
+            QRectF(reels.right() + 8, rect.top() + 42, 58, 12),
+            Qt.AlignLeft,
+            "ONLINE" if attached else "EMPTY",
+        )
 
         self._draw_lamp(
             painter,
@@ -1705,7 +1724,7 @@ class RK05PanelWidget(QWidget):
         unit_number = int(unit["unit"])
         ready = attached and bool(unit.get("run")) and not bool(unit.get("fault"))
 
-        painter.setPen(QPen(QColor("#545047"), 1))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#545047"), 3 if ready else 1))
         painter.setBrush(QColor("#20211f"))
         painter.drawRoundedRect(rect, 6, 6)
 
@@ -1718,6 +1737,10 @@ class RK05PanelWidget(QWidget):
 
         if attached:
             self._draw_pack_in_window(painter, window, os.path.basename(unit.get("file") or ""))
+            if ready:
+                painter.setPen(QPen(QColor(49, 193, 91, 150), 3))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(window.adjusted(4, 4, -4, -4), 5, 5)
         else:
             painter.setFont(QFont("Helvetica", 8))
             painter.setPen(QPen(QColor("#6f675b"), 1))
@@ -1738,8 +1761,16 @@ class RK05PanelWidget(QWidget):
         name_font = QFont("Helvetica", 14)
         name_font.setBold(True)
         painter.setFont(name_font)
-        painter.setPen(QPen(QColor("#f2f2ec"), 1))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#f2f2ec"), 1))
         painter.drawText(QRectF(lower.right() - 54, lower.top() + 14, 38, 32), Qt.AlignCenter, str(unit_number))
+
+        painter.setFont(QFont("Helvetica", 6, QFont.Bold))
+        painter.setPen(QPen(QColor("#31c15b") if ready else QColor("#6d6250"), 1))
+        painter.drawText(
+            QRectF(lower.right() - 74, lower.top() + 48, 58, 11),
+            Qt.AlignCenter,
+            "ONLINE" if ready else "EMPTY",
+        )
 
         button_w = 62
         pack_button = QRectF(lower.left() + lower.width() * 0.46, lower.top() + 12, button_w, 20)
@@ -1752,7 +1783,7 @@ class RK05PanelWidget(QWidget):
         lamp_y = lower.top() + 44
         lamps = [
             ("PWR", bool(unit.get("run")), QColor("#31c15b")),
-            ("RDY", ready, QColor("#eeeede")),
+            ("RDY", ready, QColor("#31c15b")),
             ("FLT", bool(unit.get("fault")), QColor("#b52825")),
             ("RD", active, QColor("#eeeede")),
         ]
