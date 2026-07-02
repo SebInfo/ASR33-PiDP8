@@ -817,8 +817,8 @@ class SimhRKController:
 
     def show(self) -> None:
         self.frontend._begin_rk05_show_capture()
-        self.simh_command("show rk", return_delay_ms=800)
-        QTimer.singleShot(950, self.frontend._finish_rk05_show_capture)
+        self.simh_command("show rk", return_delay_ms=1300)
+        QTimer.singleShot(1700, self.frontend._finish_rk05_show_capture)
 
     @staticmethod
     def parse_show_rk(text: str) -> dict[int, dict]:
@@ -3057,6 +3057,7 @@ class ASR33QtFrontend(QMainWindow):
         self._tu56_show_buffer = ""
         self._tu56_boot_refresh_queued = False
         self._rk05_boot_refresh_queued = False
+        self._post_connect_scan_queued = False
         self._boot_detection_buffer = ""
         self._tu56_state_observe_buffer = ""
         self._tu56_activity_ticks = 0
@@ -3155,6 +3156,7 @@ class ASR33QtFrontend(QMainWindow):
         """Handle incoming terminal data from the backend thread."""
         if data:
             text = data.decode("utf-8", errors="ignore")
+            self._queue_post_connect_device_scans()
             if self._rk05_show_capture:
                 self._rk05_show_buffer += text
             if self._tu56_show_capture:
@@ -3300,6 +3302,15 @@ class ASR33QtFrontend(QMainWindow):
         QTimer.singleShot(1700, self.refresh_dt_state_from_simh)
         QTimer.singleShot(4200, self.refresh_rk05_state)
         QTimer.singleShot(5900, self.refresh_dt_state_from_simh)
+
+    def _queue_post_connect_device_scans(self) -> None:
+        if self._post_connect_scan_queued or not self._backend_channel_ready():
+            return
+        self._post_connect_scan_queued = True
+        for delay in (2500, 6500, 12000):
+            QTimer.singleShot(delay, self.refresh_rk05_state)
+        for delay in (4200, 9000, 14500):
+            QTimer.singleShot(delay, self.refresh_dt_state_from_simh)
 
     def open_rk05_detail(self, unit_number: int) -> None:
         dialog = self._rk05_detail_dialogs.get(unit_number)
@@ -3532,6 +3543,10 @@ class ASR33QtFrontend(QMainWindow):
         if "loading os/8 from rk" in lower or "rk05" in lower or "v3d.rk05" in lower:
             return True
         if "restart address = 07600" in lower:
+            return True
+        if "type:" in lower:
+            return True
+        if re.search(r"(^|[\r\n])\s*\.[A-Z0-9]", text):
             return True
         return False
 
