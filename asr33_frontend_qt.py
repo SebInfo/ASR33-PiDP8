@@ -3011,6 +3011,7 @@ class ASR33QtFrontend(QMainWindow):
 
     display_signal = Signal()
     tu56_boot_signal = Signal()
+    rk05_boot_signal = Signal()
 
     def __init__(self, terminal, backend, config, sound=None):
         self.app = QApplication.instance() or QApplication(sys.argv)
@@ -3055,6 +3056,7 @@ class ASR33QtFrontend(QMainWindow):
         self._tu56_show_capture = False
         self._tu56_show_buffer = ""
         self._tu56_boot_refresh_queued = False
+        self._rk05_boot_refresh_queued = False
         self._boot_detection_buffer = ""
         self._tu56_state_observe_buffer = ""
         self._tu56_activity_ticks = 0
@@ -3142,6 +3144,7 @@ class ASR33QtFrontend(QMainWindow):
 
         self.display_signal.connect(self._mark_display_dirty)
         self.tu56_boot_signal.connect(self._handle_tu56_boot_detected)
+        self.rk05_boot_signal.connect(self._handle_rk05_boot_detected)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._periodic_tasks)
         self.timer.setInterval(20)
@@ -3162,6 +3165,9 @@ class ASR33QtFrontend(QMainWindow):
             if self._detect_tu56_boot_text(self._boot_detection_buffer):
                 self._boot_detection_buffer = ""
                 self.tu56_boot_signal.emit()
+            elif self._detect_rk05_boot_text(self._boot_detection_buffer):
+                self._boot_detection_buffer = ""
+                self.rk05_boot_signal.emit()
             if any(unit["attached"] for unit in self._rk05_units):
                 if not self._rk05_units[self._rk05_active_unit].get("attached"):
                     self._rk05_active_unit = self._first_attached_unit(self._rk05_units, self._rk05_active_unit)
@@ -3518,6 +3524,41 @@ class ASR33QtFrontend(QMainWindow):
         if not re.search(r"\bdt\s*-?\s*0\s*:\s*12b format\b", lower):
             return False
         return True
+
+    def _detect_rk05_boot_text(self, text: str) -> bool:
+        lower = text.lower()
+        if "loading os/8 from dectape" in lower or "dt0: 12b format" in lower:
+            return False
+        if "loading os/8 from rk" in lower or "rk05" in lower or "v3d.rk05" in lower:
+            return True
+        if "restart address = 07600" in lower:
+            return True
+        return False
+
+    def _handle_rk05_boot_detected(self) -> None:
+        if any(unit.get("attached") for unit in self._tu56_units):
+            return
+        self._mark_rk05_unit_loaded(0, "system disk", status="rk0 system")
+        if not self._rk05_boot_refresh_queued:
+            self._rk05_boot_refresh_queued = True
+            QTimer.singleShot(1800, self._refresh_rk_after_boot)
+
+    def _refresh_rk_after_boot(self) -> None:
+        self._rk05_boot_refresh_queued = False
+        self.refresh_rk05_state()
+
+    def _mark_rk05_unit_loaded(self, unit_number: int, filename: str, status: str = "") -> None:
+        unit = self._rk05_units[unit_number]
+        unit["file"] = filename
+        unit["attached"] = True
+        unit["readonly"] = False
+        unit["fault"] = False
+        unit["run"] = True
+        unit["load"] = False
+        unit["status"] = status
+        self._rk05_active_unit = unit_number
+        self._rk05_activity_ticks = 60
+        self._refresh_rk05_panel()
 
     def _handle_tu56_boot_detected(self) -> None:
         self._mark_tu56_unit_loaded(0, "tc08 system", active=True, status="tc08 system")
