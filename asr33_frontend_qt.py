@@ -1848,6 +1848,7 @@ class TeletypeWidget(QWidget):
         self.terminal_font = font
         self.terminal_columns = max(40, int(terminal_columns))
         self._lines = [""]
+        self._cursor_col = 0
         self._scroll_offset_lines = 0
         self.reader = None
         self.punch = None
@@ -1902,15 +1903,34 @@ class TeletypeWidget(QWidget):
         old_count = len(self._lines)
         for ch in text:
             if ch == "\r":
-                continue
-            if ch == "\n":
+                self._cursor_col = 0
+            elif ch == "\n":
                 self._lines.append("")
+                self._cursor_col = 0
             elif ch == "\b":
-                self._lines[-1] = self._lines[-1][:-1]
+                self._cursor_col = max(0, self._cursor_col - 1)
+            elif ch == "\t":
+                next_tab = min(self.terminal_columns - 1, ((self._cursor_col // 8) + 1) * 8)
+                while self._cursor_col < next_tab:
+                    self._put_char_at_cursor(" ")
             elif ch.isprintable():
-                self._lines[-1] += ch
+                self._put_char_at_cursor(ch)
         self._preserve_or_follow_bottom(old_count)
         self.update()
+
+    def _put_char_at_cursor(self, ch: str) -> None:
+        if self._cursor_col >= self.terminal_columns:
+            self._lines.append("")
+            self._cursor_col = 0
+        line = self._lines[-1]
+        if len(line) < self._cursor_col:
+            line += " " * (self._cursor_col - len(line))
+        if len(line) == self._cursor_col:
+            line += ch
+        else:
+            line = line[:self._cursor_col] + ch + line[self._cursor_col + 1:]
+        self._lines[-1] = line.rstrip()
+        self._cursor_col += 1
 
     def set_lines(self, lines: list[str]) -> None:
         """Replace the paper buffer with terminal history lines."""
@@ -1920,6 +1940,7 @@ class TeletypeWidget(QWidget):
             return
         old_count = len(self._lines)
         self._lines = lines[:]
+        self._cursor_col = len(self._lines[-1])
         self._preserve_or_follow_bottom(old_count)
         self.update()
 
@@ -2932,6 +2953,7 @@ class TeletypeWidget(QWidget):
         painter.setFont(self.terminal_font)
         painter.setPen(QPen(QColor("#34312c"), 1))
         metrics = QFontMetrics(self.terminal_font)
+        char_w = self._char_cell_width()
         line_h = self._line_height()
         visible = self._visible_line_count()
         total = len(self._lines)
@@ -2940,11 +2962,10 @@ class TeletypeWidget(QWidget):
         visible_lines = self._lines[start:end]
         y = printable_rect.bottom() - (len(visible_lines) - 1) * line_h
         for line in visible_lines:
-            painter.drawText(
-                int(printable_rect.left()),
-                int(y - metrics.descent()),
-                line,
-            )
+            baseline = int(y - metrics.descent())
+            for col, ch in enumerate(line[:self.terminal_columns]):
+                if ch != " ":
+                    painter.drawText(int(printable_rect.left() + col * char_w), baseline, ch)
             y += line_h
         if self._scroll_offset_lines:
             painter.setPen(QPen(QColor("#6d6250"), 1))
@@ -2956,6 +2977,10 @@ class TeletypeWidget(QWidget):
 
     def _line_height(self) -> int:
         return max(18, int(QFontMetrics(self.terminal_font).height() * 1.25))
+
+    def _char_cell_width(self) -> int:
+        metrics = QFontMetrics(self.terminal_font)
+        return max(metrics.horizontalAdvance("M"), metrics.horizontalAdvance("0"), metrics.averageCharWidth(), 10)
 
     def _visible_line_count(self) -> int:
         _, printable_rect, _ = self._layout_rects()
