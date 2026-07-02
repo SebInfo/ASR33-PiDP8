@@ -823,17 +823,24 @@ class SimhRKController:
     @staticmethod
     def parse_show_rk(text: str) -> dict[int, dict]:
         parsed: dict[int, dict] = {}
+        rk_context = False
         for raw_line in text.splitlines():
             line = raw_line.strip()
+            if not line:
+                continue
+            if re.search(r"\bRK(8E|A)?\b", line, re.IGNORECASE):
+                rk_context = True
+            match = re.search(
+                r"\bRKA?\s*-?\s*([0-3])\b|\bRKA?([0-3])\s*:|^\s*([0-3])\s+",
+                line,
+                re.IGNORECASE,
+            )
+            if not match:
+                continue
+            if match.group(3) is not None and not rk_context:
+                continue
+            unit_number = int(match.group(1) or match.group(2) or match.group(3))
             upper = line.upper()
-            if not upper.startswith("RK"):
-                continue
-            parts = upper.split(None, 1)
-            if not parts or len(parts[0]) < 3 or not parts[0][2:].isdigit():
-                continue
-            unit_number = int(parts[0][2:])
-            if unit_number not in (0, 1, 2, 3):
-                continue
             not_attached = "NOT ATTACHED" in upper
             attached = "ATTACHED" in upper and not not_attached
             readonly = "READ ONLY" in upper or "WRITE LOCK" in upper or "WRITE PROTECT" in upper
@@ -1747,7 +1754,7 @@ class RK05PanelWidget(QWidget):
         else:
             painter.setFont(QFont("Helvetica", 8))
             painter.setPen(QPen(QColor("#6f675b"), 1))
-            painter.drawText(window, Qt.AlignCenter, "empty")
+            painter.drawText(window, Qt.AlignCenter, unit.get("status") or "empty")
 
         lower = QRectF(rect.left() + 10, window.bottom() + 8, rect.width() - 20, rect.bottom() - window.bottom() - 18)
         painter.setPen(QPen(QColor("#d8cfb8"), 1))
@@ -1772,7 +1779,7 @@ class RK05PanelWidget(QWidget):
         painter.drawText(
             QRectF(lower.right() - 74, lower.top() + 48, 58, 11),
             Qt.AlignCenter,
-            "ONLINE" if ready else "EMPTY",
+            "ONLINE" if ready else (unit.get("status") or "EMPTY").upper()[:10],
         )
 
         button_w = 62
@@ -3017,6 +3024,7 @@ class ASR33QtFrontend(QMainWindow):
         self._rk05_active_unit = 0
         self._rk05_show_capture = False
         self._rk05_show_buffer = ""
+        self._rk05_state_observe_buffer = ""
         self._rk05_detail_dialogs: dict[int, RK05DetailDialog] = {}
         self._tu56_detail_dialogs: dict[int, TU56DetailDialog] = {}
         self._tu56_show_capture = False
@@ -3124,6 +3132,7 @@ class ASR33QtFrontend(QMainWindow):
             if self._tu56_show_capture:
                 self._tu56_show_buffer += text
             self._boot_detection_buffer = (self._boot_detection_buffer + text)[-500:]
+            self._observe_rk05_state_text(text)
             self._observe_tu56_state_text(text)
             if self._detect_tu56_boot_text(self._boot_detection_buffer):
                 self._boot_detection_buffer = ""
@@ -3334,8 +3343,27 @@ class ASR33QtFrontend(QMainWindow):
 
     def toggle_rk05_run(self, unit_number: int) -> None:
         unit = self._rk05_units[unit_number]
-        unit["run"] = not bool(unit.get("run"))
-        unit["status"] = "run" if unit["run"] else "stopped"
+        if unit.get("run"):
+            if unit.get("attached"):
+                if unit_number == 0:
+                    if not self._confirm_rk0_risky_action(
+                        "RK0 is probably the OS/8 system disk. Detaching it may stop or crash the running system."
+                    ):
+                        return
+                self._set_rk05_load(unit_number, True, "run off: detaching")
+                self.rk_controller.detach(unit_number)
+                unit["file"] = ""
+                unit["attached"] = False
+                unit["active"] = False
+                unit["status"] = "run off"
+                if self._rk05_active_unit == unit_number:
+                    self._rk05_activity_ticks = 0
+                QTimer.singleShot(1000, lambda: self._set_rk05_load(unit_number, False, ""))
+                QTimer.singleShot(1200, self.refresh_rk05_state)
+            unit["run"] = False
+        else:
+            unit["run"] = True
+            unit["status"] = "run"
         self._refresh_rk05_panel()
 
     def toggle_rk05_write_protect(self, unit_number: int) -> None:
@@ -3391,7 +3419,20 @@ class ASR33QtFrontend(QMainWindow):
         self._rk05_show_capture = False
         parsed = SimhRKController.parse_show_rk(self._rk05_show_buffer)
         if not parsed:
+            for unit in self._rk05_units:
+                if not unit.get("attached"):
+                    unit["status"] = "scan: no rk output"
+            self._refresh_rk05_panel()
             return
+        self._apply_rk05_parsed_state(parsed)
+
+    def _observe_rk05_state_text(self, text: str) -> None:
+        self._rk05_state_observe_buffer = (self._rk05_state_observe_buffer + text)[-2500:]
+        parsed = SimhRKController.parse_show_rk(self._rk05_state_observe_buffer)
+        if parsed:
+            self._apply_rk05_parsed_state(parsed)
+
+    def _apply_rk05_parsed_state(self, parsed: dict[int, dict]) -> None:
         for unit_number in range(4):
             if unit_number not in parsed:
                 continue
@@ -3404,6 +3445,8 @@ class ASR33QtFrontend(QMainWindow):
             unit["run"] = bool(unit["attached"])
             unit["load"] = False
             unit["status"] = "refreshed"
+            if unit["attached"] and not self._rk05_units[self._rk05_active_unit].get("attached"):
+                self._rk05_active_unit = unit_number
         self._refresh_rk05_panel()
 
     def tu56_units(self) -> list[dict]:
